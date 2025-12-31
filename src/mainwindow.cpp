@@ -85,13 +85,21 @@ MainWindow::MainWindow(QWidget *parent) :
     timer(this),
     qcontrol(this),
     pulseButtonColor(255, 40, 40),
-    isSearchOngoing(false)
+    isSearchOngoing(false),
+    m_incrementalFilterStreaming(false),
+    m_incrementalFilterUiUpdateTimer(nullptr),
+    m_incrementalFilterUiUpdatePending(false)
 {
     dltIndexer = NULL;
     settings = QDltSettingsManager::getInstance();
     ui->setupUi(this);
     ui->enableConfigFrame->setVisible(false);
     setAcceptDrops(true);
+
+    m_incrementalFilterUiUpdateTimer = new QTimer(this);
+    m_incrementalFilterUiUpdateTimer->setSingleShot(true);
+    m_incrementalFilterUiUpdateTimer->setInterval(120);
+    connect(m_incrementalFilterUiUpdateTimer, &QTimer::timeout, this, &MainWindow::applyIncrementalFilterIndexToUi);
 
     target_version_string = "";
 
@@ -641,6 +649,7 @@ void MainWindow::initFileHandling()
     connect(dltIndexer, SIGNAL(finishIndex()), this, SLOT(reloadLogFileFinishIndex()));
     connect(dltIndexer, SIGNAL(finishFilter()), this, SLOT(reloadLogFileFinishFilter()));
     connect(dltIndexer, SIGNAL(finishDefaultFilter()), this, SLOT(reloadLogFileFinishDefaultFilter()));
+    connect(dltIndexer, SIGNAL(filterIndexChunkReady(QVector<qint64>)), this, SLOT(onFilterIndexChunkReady(QVector<qint64>)));
     connect(dltIndexer, SIGNAL(timezone(int,unsigned char)), this, SLOT(controlMessage_Timezone(int,unsigned char)));
     connect(dltIndexer, SIGNAL(unregisterContext(QString,QString,QString)), this, SLOT(controlMessage_UnregisterContext(QString,QString,QString)));
     connect(dltIndexer, SIGNAL(finished()), this, SLOT(indexDone()));
@@ -2054,6 +2063,52 @@ void MainWindow::reloadLogFileFinishIndex()
     }
 }
 
+void MainWindow::onFilterIndexChunkReady(const QVector<qint64> &chunk)
+{
+    if(chunk.isEmpty())
+        return;
+
+    if(!m_incrementalFilterUiUpdateTimer)
+        return;
+
+    if(!m_incrementalFilterStreaming)
+    {
+        m_incrementalFilterPending.clear();
+        m_incrementalFilterStreaming = true;
+        qfile.enableFilter(true);
+        qfile.clearIndexFilter();
+    }
+
+    m_incrementalFilterPending += chunk;
+
+    // Coalesce UI updates to avoid repeated full relayouts while indexing.
+    m_incrementalFilterUiUpdatePending = true;
+    if(!m_incrementalFilterUiUpdateTimer->isActive())
+        m_incrementalFilterUiUpdateTimer->start();
+}
+
+void MainWindow::applyIncrementalFilterIndexToUi()
+{
+    if(!m_incrementalFilterUiUpdatePending)
+        return;
+    m_incrementalFilterUiUpdatePending = false;
+
+    if(m_incrementalFilterPending.isEmpty())
+        return;
+
+    qfile.enableFilter(true);
+    qfile.appendIndexFilter(m_incrementalFilterPending);
+    m_incrementalFilterPending.clear();
+
+    tableModel->setForceEmpty(false);
+    tableModel->modelChanged();
+
+    // Avoid forcing QWidget::update() for every chunk; modelChanged triggers view updates.
+    // Only autoscroll at this throttled rate.
+    if(settings->autoScroll)
+        ui->tableView->scrollToBottom();
+}
+
 void MainWindow::reloadLogFileFinishFilter()
 {
     // unlock table view
@@ -2080,12 +2135,24 @@ void MainWindow::reloadLogFileFinishFilter()
     // updateIndex, if messages are received in between
     updateIndex();
 
+    // If filter indexing finishes very quickly (e.g. filter index cache hit),
+    // the coalescing timer may not have fired yet. Flush any pending chunk now
+    // before we stop/reset incremental state, otherwise the view can stay empty.
+    applyIncrementalFilterIndexToUi();
+
     // update table
     tableModel->setForceEmpty(false);
     tableModel->modelChanged();
     this->update(); // force update
     restoreSelection();
     m_searchtableModel->modelChanged();
+
+    if(m_incrementalFilterUiUpdateTimer)
+        m_incrementalFilterUiUpdateTimer->stop();
+    m_incrementalFilterUiUpdatePending = false;
+
+    m_incrementalFilterStreaming = false;
+    m_incrementalFilterPending.clear();
 
     // process getLogInfoMessages
     if ((dltIndexer->getMode() == DltFileIndexer::modeIndexAndFilter) &&
@@ -2200,6 +2267,14 @@ void MainWindow::reloadLogFile(bool update, bool multithreaded)
     // force empty table
     tableModel->setForceEmpty(true);
     tableModel->modelChanged();
+
+    m_incrementalFilterPending.clear();
+    m_incrementalFilterStreaming = false;
+    qfile.setIndexFilter(QVector<qint64>());
+
+    if(m_incrementalFilterUiUpdateTimer)
+        m_incrementalFilterUiUpdateTimer->stop();
+    m_incrementalFilterUiUpdatePending = false;
 
     // stop last indexing process, if any
     dltIndexer->stop();
