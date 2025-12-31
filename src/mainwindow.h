@@ -155,6 +155,8 @@ private:
     /* Shortcuts */
     QShortcut *copyPayloadShortcut;
     QShortcut *markShortcut;
+    QShortcut *nextMarkedShortcut;
+    QShortcut *prevMarkedShortcut;
 
     /* Export */
     ExporterDialog exporterDialog;
@@ -445,6 +447,8 @@ public slots:
     void on_actionFindNext();
     void mark_unmark_lines();
     void unmark_all_lines();
+    void goto_next_marked_line();
+    void goto_prev_marked_line();
     void filterIndexStart();
     void filterIndexEnd();
     void splitLogsEcuid();
