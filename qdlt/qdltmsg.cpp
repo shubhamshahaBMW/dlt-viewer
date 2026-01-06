@@ -1076,12 +1076,6 @@ void QDltMsg::clear()
     segmentationConsecutiveFrame = 0;
     segmentationAbortReason = 0;
     index = -1;
-
-    // Invalidate cached strings
-    headerStringCached = false;
-    payloadStringCached = false;
-    cachedHeaderString.clear();
-    cachedPayloadString.clear();
 }
 
 void QDltMsg::clearArguments()
@@ -1120,11 +1114,6 @@ void QDltMsg::removeArgument(int index)
 
 QString QDltMsg::toStringHeader() const
 {
-    // Return cached version if available
-    if (headerStringCached) {
-        return cachedHeaderString;
-    }
-
     QString text;
     text.reserve(128);
 
@@ -1155,20 +1144,11 @@ QString QDltMsg::toStringHeader() const
     text += ' ';
     text += QString::number(getNumberOfArguments());
 
-    // Cache for future use
-    cachedHeaderString = text;
-    headerStringCached = true;
-
     return text;
 }
 
 QString QDltMsg::toStringPayload() const
 {
-    // Return cached version if available
-    if (payloadStringCached) {
-        return cachedPayloadString;
-    }
-
     QString text;
     QDltArgument argument;
     QByteArray data;
@@ -1187,8 +1167,6 @@ QString QDltMsg::toStringPayload() const
             text += "|";
             text += QDlt::toAscii(data, false);
         }
-        cachedPayloadString = text;
-        payloadStringCached = true;
         return text;
     }
 
@@ -1299,10 +1277,6 @@ QString QDltMsg::toStringPayload() const
         }
 
     }
-
-    // Cache for future use
-    cachedPayloadString = text;
-    payloadStringCached = true;
     return text;
 }
 

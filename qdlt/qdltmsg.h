@@ -634,14 +634,6 @@ private:
     //! Position of current file in a QDltFile
     int index;
 
-    //! Cached header string for performance optimization
-    mutable QString cachedHeaderString;
-    mutable bool headerStringCached{false};
-    
-    //! Cached payload string for performance optimization
-    mutable QString cachedPayloadString;
-    mutable bool payloadStringCached{false};
-
 };
 
 #endif // QDLT_MSG_H

@@ -32,6 +32,11 @@
 #include <QColorDialog>
 #include <QAction>
 
+#if !defined(_MSC_VER)
+#include <sys/time.h>
+#include <time.h>
+#endif
+
 #if defined(_MSC_VER)
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
