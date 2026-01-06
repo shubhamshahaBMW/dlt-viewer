@@ -1076,16 +1076,12 @@ void QDltMsg::clear()
     segmentationConsecutiveFrame = 0;
     segmentationAbortReason = 0;
     index = -1;
-    
+
     // Invalidate cached strings
-    if (headerStringCached) {
-        headerStringCached = false;
-        cachedHeaderString.clear();
-    }
-    if (payloadStringCached) {
-        payloadStringCached = false;
-        cachedPayloadString.clear();
-    }
+    headerStringCached = false;
+    payloadStringCached = false;
+    cachedHeaderString.clear();
+    cachedPayloadString.clear();
 }
 
 void QDltMsg::clearArguments()

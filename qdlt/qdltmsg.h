@@ -636,11 +636,11 @@ private:
 
     //! Cached header string for performance optimization
     mutable QString cachedHeaderString;
-    mutable bool headerStringCached;
+    mutable bool headerStringCached{false};
     
     //! Cached payload string for performance optimization
     mutable QString cachedPayloadString;
-    mutable bool payloadStringCached;
+    mutable bool payloadStringCached{false};
 
 };
 

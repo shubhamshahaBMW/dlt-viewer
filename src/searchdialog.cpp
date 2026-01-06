@@ -21,6 +21,7 @@
 #include "ui_searchdialog.h"
 #include "qdltoptmanager.h"
 #include "tablemodel.h"
+#include "qdltmsg.h"
 
 #include <dltmessagematcher.h>
 
@@ -30,6 +31,16 @@
 #include <QSignalBlocker>
 #include <QColorDialog>
 #include <QAction>
+
+#if defined(_MSC_VER)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <Windows.h>
+#endif
 
 SearchDialog::SearchDialog(QWidget *parent) :
     QDialog(parent),
@@ -370,6 +381,9 @@ int SearchDialog::find()
     findMessages(startLine,searchBorder,searchTextRegExpression);
 
     emit searchProgressChanged(false);
+
+    const auto resultsThisSearch = searchtoIndex() ? m_searchtablemodel->get_SearchResultListSize() : (match ? 1 : 0);
+    qDebug() << "Search totals:" << "results=" << resultsThisSearch;
 
     if (searchtoIndex() == true )
     {
