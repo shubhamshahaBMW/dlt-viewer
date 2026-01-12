@@ -1119,6 +1119,9 @@ bool QDltMsg::getMsg(QByteArray &buf,bool withStorageHeader) {
             return false;
     }
 
+    // Reserve expected size to avoid repeated reallocations while building the message
+    buf.reserve(payload.size() + sizeof(DltStorageHeader) + sizeof(DltStandardHeader) + sizeof(DltExtendedHeader) + 64);
+
     /* write storageheader */
     if(withStorageHeader)
     {
