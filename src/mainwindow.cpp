@@ -51,6 +51,7 @@
 #include <QtEndian>
 #include <QDir>
 #include <QDirIterator>
+#include <QThread>
 
 #if defined(_MSC_VER)
 #include <io.h>
@@ -1132,6 +1133,7 @@ void MainWindow::on_action_menuFile_Open_triggered()
         connect(importerThread, &QDltImporter::resultReady, this, &MainWindow::handleImportResults);
         connect(importerThread, &QDltImporter::finished,    importerThread, &QObject::deleteLater);
         statusProgressBar->show();
+        importerThread->setPriority(QThread::LowPriority);
         importerThread->start();
     }
     else if(dltFileNames.isEmpty()&&pcapFileNames.isEmpty()&&!mf4FileNames.isEmpty())
@@ -1143,6 +1145,7 @@ void MainWindow::on_action_menuFile_Open_triggered()
         connect(importerThread, &QDltImporter::resultReady, this, &MainWindow::handleImportResults);
         connect(importerThread, &QDltImporter::finished,    importerThread, &QObject::deleteLater);
         statusProgressBar->show();
+        importerThread->setPriority(QThread::LowPriority);
         importerThread->start();
     }
     else
@@ -1511,6 +1514,7 @@ void MainWindow::on_actionAppend_triggered()
         connect(importerThread, &QDltImporter::resultReady, this, &MainWindow::handleImportResults);
         connect(importerThread, &QDltImporter::finished,    importerThread, &QObject::deleteLater);
         statusProgressBar->show();
+        importerThread->setPriority(QThread::LowPriority);
         importerThread->start();
     }
 }
@@ -1734,6 +1738,7 @@ void MainWindow::on_actionExport_triggered()
     connect(exporterThread, &QDltExporter::resultReady, this, &MainWindow::handleExportResults);
     connect(exporterThread, &QDltExporter::finished,    exporterThread, &QObject::deleteLater);
     statusProgressBar->show();
+    exporterThread->setPriority(QThread::LowPriority);
     exporterThread->start();
 }
 
@@ -2268,6 +2273,7 @@ void MainWindow::reloadLogFile(bool update, bool multithreaded)
     if(multithreaded == true)
      {
         //qDebug() << "Run indexer multi thread" << __FILE__ << __LINE__;
+          dltIndexer->setPriority(QThread::NormalPriority);
         dltIndexer->start();
      }
     else
@@ -2300,6 +2306,7 @@ void MainWindow::reloadLogFileDefaultFilter()
     dltIndexer->setSortByTimestampEnabled(QDltSettingsManager::getInstance()->value("startup/sortByTimestampEnabled", false).toBool());
 
     // start indexing
+    dltIndexer->setPriority(QThread::NormalPriority);
     dltIndexer->start();
 }
 
@@ -3295,6 +3302,7 @@ void MainWindow::on_tabExplore_fileOpenRequested(const QString &path)
         connect(importerThread, &QDltImporter::resultReady, this, &MainWindow::handleImportResults);
         connect(importerThread, &QDltImporter::finished, importerThread, &QObject::deleteLater);
         statusProgressBar->show();
+        importerThread->setPriority(QThread::LowPriority);
         importerThread->start();
     } else if (path.endsWith(".mf4", Qt::CaseInsensitive)) {
         on_action_menuFile_Clear_triggered();
@@ -3304,6 +3312,7 @@ void MainWindow::on_tabExplore_fileOpenRequested(const QString &path)
         connect(importerThread, &QDltImporter::resultReady, this, &MainWindow::handleImportResults);
         connect(importerThread, &QDltImporter::finished, importerThread, &QObject::deleteLater);
         statusProgressBar->show();
+        importerThread->setPriority(QThread::LowPriority);
         importerThread->start();
     } else if (path.endsWith(".dlf", Qt::CaseInsensitive)) {
         openDlfFile(path, true);
@@ -3324,6 +3333,7 @@ void MainWindow::on_tabExplore_fileAppendRequested(const QString& path) {
         connect(importerThread, &QDltImporter::resultReady, this, &MainWindow::handleImportResults);
         connect(importerThread, &QDltImporter::finished, importerThread, &QObject::deleteLater);
         statusProgressBar->show();
+        importerThread->setPriority(QThread::LowPriority);
         importerThread->start();
     } else if (path.endsWith(".dlf", Qt::CaseInsensitive))
         openDlfFile(path, false);
@@ -3341,6 +3351,7 @@ void MainWindow::on_tabExplore_filesAppendRequest(const QStringList& mf4AndPcapP
     connect(importerThread, &QDltImporter::resultReady, this, &MainWindow::handleImportResults);
     connect(importerThread, &QDltImporter::finished, importerThread, &QObject::deleteLater);
     statusProgressBar->show();
+    importerThread->setPriority(QThread::LowPriority);
     importerThread->start();
 }
 
@@ -7218,6 +7229,7 @@ void MainWindow::dropEvent(QDropEvent *event)
             connect(importerThread, &QDltImporter::resultReady, this, &MainWindow::handleImportResults);
             connect(importerThread, &QDltImporter::finished,    importerThread, &QObject::deleteLater);
             statusProgressBar->show();
+            importerThread->setPriority(QThread::LowPriority);
             importerThread->start();
         }
         if(!filenames.isEmpty())
@@ -7958,6 +7970,7 @@ void MainWindow::openSupportedFile(const QString& path)
         connect(importerThread, &QDltImporter::resultReady, this, &MainWindow::handleImportResults);
         connect(importerThread, &QDltImporter::finished, importerThread, &QObject::deleteLater);
         statusProgressBar->show();
+        importerThread->setPriority(QThread::LowPriority);
         importerThread->start();
     } break;
     case 4: {
@@ -7967,6 +7980,7 @@ void MainWindow::openSupportedFile(const QString& path)
         connect(importerThread, &QDltImporter::resultReady, this, &MainWindow::handleImportResults);
         connect(importerThread, &QDltImporter::finished, importerThread, &QObject::deleteLater);
         statusProgressBar->show();
+        importerThread->setPriority(QThread::LowPriority);
         importerThread->start();
     } break;
     default:
