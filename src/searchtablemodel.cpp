@@ -23,6 +23,8 @@
 #include "dlt_protocol.h"
 #include "qdltoptmanager.h"
 
+#include <algorithm>
+
 
 
 SearchTableModel::SearchTableModel(const QString &,QObject *parent) :
@@ -278,9 +280,12 @@ int SearchTableModel::rowCount(const QModelIndex & /*parent*/) const
 
 void SearchTableModel::modelChanged()
 {    
-    index(0, 1);
-    index(m_searchResultList.size()-1, 0);
-    index(m_searchResultList.size()-1, columnCount() - 1);
+    if (!m_searchResultList.isEmpty())
+    {
+        index(0, 1);
+        index(m_searchResultList.size()-1, 0);
+        index(m_searchResultList.size()-1, columnCount() - 1);
+    }
     emit(layoutChanged());
 }
 
@@ -291,13 +296,52 @@ int SearchTableModel::columnCount(const QModelIndex & /*parent*/) const
 
 void SearchTableModel::clear_SearchResults()
 {
+    beginResetModel();
     m_searchResultList.clear();
-    modelChanged();
+    endResetModel();
 }
 
 void SearchTableModel::add_SearchResultEntry(unsigned long entry)
 {
+    const int row = m_searchResultList.size();
+    beginInsertRows(QModelIndex(), row, row);
     m_searchResultList.append(entry);
+    endInsertRows();
+}
+
+void SearchTableModel::add_SearchResultEntries(const QList<unsigned long>& entries)
+{
+    if (entries.isEmpty())
+        return;
+
+    const int firstRow = m_searchResultList.size();
+    const int lastRow = firstRow + entries.size() - 1;
+
+    beginInsertRows(QModelIndex(), firstRow, lastRow);
+    m_searchResultList.append(entries);
+    endInsertRows();
+}
+
+void SearchTableModel::add_SearchResultEntriesSorted(const QList<unsigned long>& entries)
+{
+    if (entries.isEmpty())
+        return;
+
+    // Entries produced by scanning are typically already sorted, but we don't rely on it.
+    QList<unsigned long> sortedEntries(entries);
+    std::sort(sortedEntries.begin(), sortedEntries.end());
+
+    const unsigned long firstValue = sortedEntries.first();
+    const int insertPos = int(std::lower_bound(m_searchResultList.begin(), m_searchResultList.end(), firstValue)
+                                  - m_searchResultList.begin());
+
+    const int firstRow = insertPos;
+    const int lastRow = insertPos + sortedEntries.size() - 1;
+
+    beginInsertRows(QModelIndex(), firstRow, lastRow);
+    for (int i = 0; i < sortedEntries.size(); ++i)
+        m_searchResultList.insert(insertPos + i, sortedEntries.at(i));
+    endInsertRows();
 }
 
 
