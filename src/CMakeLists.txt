@@ -40,6 +40,8 @@ add_executable(dlt-viewer
     injectiondialog.cpp
     searchdialog.h
     searchdialog.cpp
+    searchperformance.h
+    searchperformance.cpp
     multiplecontextdialog.h
     multiplecontextdialog.cpp
     tablemodel.h
@@ -106,6 +108,7 @@ target_link_libraries(dlt-viewer
     qdlt
     ${QT_PREFIX}::Core
     ${QT_PREFIX}::Network
+    ${QT_PREFIX}::Concurrent
     ${QT_PREFIX}::Widgets
     ${QT_PREFIX}::SerialPort)
 

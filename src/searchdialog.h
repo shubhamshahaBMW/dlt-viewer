@@ -23,8 +23,14 @@
 #include <QDialog>
 #include <QTableView>
 #include <QCheckBox>
+#include <QCache>
+#include <QElapsedTimer>
+#include <QFutureWatcher>
+
+#include <atomic>
 
 #include "searchtablemodel.h"
+#include "searchperformance.h"
 
 namespace Ui {
 class SearchDialog;
@@ -65,9 +71,17 @@ private:
     Ui::SearchDialog *ui;
     SearchTableModel *m_searchtablemodel;
 
-    bool isSearchCancelled{false};
+    std::atomic_bool isSearchCancelled{false};
+    QFutureWatcher<QList<unsigned long>> m_findAllWatcher;
+    QElapsedTimer m_findAllUiUpdateTimer;
+    qint64 m_findAllLastUiUpdateMs{0};
+    int m_findAllAddedSinceLastUiUpdate{0};
 
     long int startLine;
+    long searchseconds;
+    QElapsedTimer searchTimer;
+    qint64 searchCpuTimeStart;
+    SearchPerformance performanceMeasure;
     bool nextClicked;
     bool match;
     bool fSilentMode;
@@ -97,6 +111,14 @@ private:
     void setPayload(bool payload);
     void setCaseSensitive(bool caseSensitive);
     void setNextClicked(bool next);
+
+    void starttime(const QString& searchTerm = "");
+    void stoptime(qint64 messagesProcessed = 0);
+
+    void startParallelFindAll(const QRegularExpression& searchTextRegExp);
+    void reportProgress(int progress);
+    void onFindAllFinished();
+    void appendFindAllMatchesChunk(const QList<unsigned long>& entries);
 
     int find();
 
