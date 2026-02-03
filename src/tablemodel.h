@@ -35,6 +35,8 @@
 #include <qdltlrucache.hpp>
 
 #include <optional>
+#include <QDateTime>
+
 
 #define DLT_VIEWER_COLUMN_COUNT FieldNames::Arg0
 
@@ -64,6 +66,32 @@ public:
     void setLastSearchIndex(int idx) {this->lastSearchIndex = idx;}
     QString getToolTipForFields(FieldNames::Fields cn);
 
+    struct OverlayComment
+    {
+        QString fileName;       // absolute path as opened
+        qint64 anchorOffset{-1}; // byte offset in that file (storage header)
+        bool after{false};
+        QString text;
+
+        // Timestamp fields copied from anchor message (for display)
+        QString ecu;
+        unsigned int timeSeconds{0};
+        unsigned int microseconds{0};
+        unsigned int timestamp{0};
+        unsigned int sessionId{0};
+
+        qint64 createdUtcMs{0};
+    };
+
+    void setOverlayComments(QVector<OverlayComment> comments);
+    void clearOverlayComments();
+
+    // Mapping helpers (view-row may include overlay comments)
+    std::optional<int> messageFilteredRowForViewRow(int viewRow) const;
+    std::optional<int> messageAllIndexForViewRow(int viewRow) const; // QDltFile all-index (getMsgFilterPos)
+    int viewRowForFilteredRow(int filteredRow) const;                // view-row of the anchor message row
+    bool isCommentRow(int viewRow) const;
+
 private:
     long int lastSearchIndex;
     bool emptyForceFlag;
@@ -80,6 +108,14 @@ private:
     QList<unsigned long int> selectedMarkerRows;
     QColor getMsgBackgroundColor(const std::optional<QDltMsg>& msg, int index, long int filterposindex) const;
     bool eventFilter(QObject *obj, QEvent *event);
+
+    void rebuildOverlayMapping();
+    int filteredRowForAllIndex(int allIndex) const;
+
+    QVector<OverlayComment> m_overlayComments;
+    QVector<int> m_viewRowToFilteredRow;
+    QVector<int> m_viewRowToCommentIndex;
+    QVector<int> m_filteredRowToViewRow;
 };
 
 class HtmlDelegate : public QStyledItemDelegate

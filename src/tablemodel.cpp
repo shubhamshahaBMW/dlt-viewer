@@ -21,6 +21,8 @@
 #include <QApplication>
 #include <qmessagebox.h>
 
+#include <algorithm>
+
 #include "tablemodel.h"
 #include "fieldnames.h"
 #include "dltuiutils.h"
@@ -37,6 +39,10 @@ TableModel::TableModel(const QString & /*data*/, QObject *parent)
      emptyForceFlag = false;
      loggingOnlyMode = false;
      searchhit = -1;
+
+     m_viewRowToFilteredRow.clear();
+     m_viewRowToCommentIndex.clear();
+     m_filteredRowToViewRow.clear();
  }
 
  TableModel::~TableModel()
@@ -57,7 +63,7 @@ TableModel::TableModel(const QString & /*data*/, QObject *parent)
          return QVariant();
      }
 
-     if (index.row() >= qfile->sizeFilter() && index.row()<0)
+     if (index.row() < 0 || index.row() >= rowCount())
      {
          return QVariant();
      }
@@ -74,11 +80,68 @@ TableModel::TableModel(const QString & /*data*/, QObject *parent)
          return FieldNames::getColumnAlignment((FieldNames::Fields)index.column(),project->settings);
      }
 
-     long int filterposindex = qfile->getMsgFilterPos(index.row());
+     const int viewRow = index.row();
+     if(isCommentRow(viewRow))
+     {
+         const int commentIdx = (viewRow >= 0 && viewRow < m_viewRowToCommentIndex.size()) ? m_viewRowToCommentIndex[viewRow] : -1;
+         if(commentIdx < 0 || commentIdx >= m_overlayComments.size())
+             return QVariant();
+         const auto& c = m_overlayComments[commentIdx];
+
+         if(role == Qt::ForegroundRole)
+             return QBrush(DltUiUtils::optimalTextColor(QColor(0,255,0)));
+         if(role == Qt::BackgroundRole)
+             return QBrush(QColor(0,255,0));
+         if(role == Qt::ToolTipRole)
+             return c.text;
+
+         if(role != Qt::DisplayRole)
+             return QVariant();
+
+         switch(index.column())
+         {
+         case FieldNames::Index:
+             return QString();
+         case FieldNames::Time:
+         {
+             const QDateTime dt = QDateTime::fromSecsSinceEpoch(static_cast<qint64>(c.timeSeconds), Qt::UTC);
+             return QString("%1.%2").arg(dt.toString("yyyy/MM/dd hh:mm:ss")).arg(c.microseconds, 6, 10, QLatin1Char('0'));
+         }
+         case FieldNames::TimeStamp:
+             return QString("%1.%2").arg(c.timestamp/10000).arg(c.timestamp%10000,4,10,QLatin1Char('0'));
+         case FieldNames::Counter:
+             return QString();
+         case FieldNames::EcuId:
+             return c.ecu;
+         case FieldNames::AppId:
+             return QStringLiteral("USER");
+         case FieldNames::ContextId:
+             return QStringLiteral("CMNT");
+         case FieldNames::SessionId:
+             return QString("%1").arg(c.sessionId);
+         case FieldNames::Type:
+             return QStringLiteral("log");
+         case FieldNames::Subtype:
+             return QStringLiteral("info");
+         case FieldNames::Mode:
+             return QStringLiteral("verbose");
+         case FieldNames::ArgCount:
+             return QStringLiteral("1");
+         case FieldNames::Payload:
+             return c.text;
+         default:
+             return QVariant();
+         }
+     }
+
+     const int filteredRow = (viewRow >= 0 && viewRow < m_viewRowToFilteredRow.size()) ? m_viewRowToFilteredRow[viewRow] : viewRow;
+     if(filteredRow < 0 || filteredRow >= qfile->sizeFilter())
+         return QVariant();
+     long int filterposindex = qfile->getMsgFilterPos(filteredRow);
 
      std::optional<QDltMsg> msg;
-     if (m_cache.exists(index.row())) {
-         msg = m_cache.get(index.row());
+     if (m_cache.exists(filteredRow)) {
+         msg = m_cache.get(filteredRow);
      } else {
          QDltMsg omsg;
          if (bool success = qfile->getMsg(filterposindex, omsg); success) {
@@ -88,7 +151,7 @@ TableModel::TableModel(const QString & /*data*/, QObject *parent)
             }
          }
 
-         m_cache.put(index.row(), msg);
+         m_cache.put(filteredRow, msg);
      }
 
      if (role == Qt::DisplayRole)
@@ -97,7 +160,7 @@ TableModel::TableModel(const QString & /*data*/, QObject *parent)
        {
          if(index.column() == FieldNames::Index)
          {
-             return QString("%1").arg(qfile->getMsgFilterPos(index.row()));
+             return QString("%1").arg(qfile->getMsgFilterPos(filteredRow));
          }
          else if(index.column() == FieldNames::Payload)
          {
@@ -112,7 +175,7 @@ TableModel::TableModel(const QString & /*data*/, QObject *parent)
          {
          case FieldNames::Index:
              /* display index */
-             return QString("%L1").arg(qfile->getMsgFilterPos(index.row()));
+             return QString("%L1").arg(qfile->getMsgFilterPos(filteredRow));
          case FieldNames::Time:
              if( project->settings->automaticTimeSettings == 0 )
                 return QString("%1.%2").arg(msg->getGmTimeWithOffsetString(project->settings->utcOffset,project->settings->dst)).arg(msg->getMicroseconds(),6,10,QLatin1Char('0'));
@@ -248,13 +311,13 @@ TableModel::TableModel(const QString & /*data*/, QObject *parent)
      if ( role == Qt::ForegroundRole )
      {
          /* Calculate background color and find optimal foreground color */
-         return QBrush(DltUiUtils::optimalTextColor(getMsgBackgroundColor(msg, index.row(),filterposindex)));
+         return QBrush(DltUiUtils::optimalTextColor(getMsgBackgroundColor(msg, filteredRow,filterposindex)));
      }
 
      if ( role == Qt::BackgroundRole )
      {
          /* Calculate background color */
-         return QBrush(getMsgBackgroundColor(msg, index.row(),filterposindex));
+         return QBrush(getMsgBackgroundColor(msg, filteredRow,filterposindex));
      }
 
     if ( role == Qt::ToolTipRole )
@@ -314,7 +377,13 @@ QVariant TableModel::headerData(int section, Qt::Orientation orientation,
      else if(true == loggingOnlyMode)
          return 1;
      else
+     {
+         if(!qfile)
+             return 0;
+         if(!m_viewRowToFilteredRow.isEmpty() && m_viewRowToFilteredRow.size() == m_viewRowToCommentIndex.size())
+             return m_viewRowToFilteredRow.size();
          return qfile->sizeFilter();
+     }
  }
 
  void TableModel::modelChanged()
@@ -334,6 +403,8 @@ QVariant TableModel::headerData(int section, Qt::Orientation orientation,
 
      /* last search index must be deleted because model changed */
      lastSearchIndex = -1;
+
+     rebuildOverlayMapping();
 
      emit(layoutChanged());
  }
@@ -419,7 +490,13 @@ QColor TableModel::getMsgBackgroundColor(const std::optional<QDltMsg>& msg, int 
        return color;
     }
 
-    if(lastSearchIndex != -1 && filterposindex == qfile->getMsgFilterPos(lastSearchIndex))
+    // User comments written into the DLT file
+    if(msg->getApid() == QStringLiteral("USER") && msg->getCtid() == QStringLiteral("CMNT"))
+    {
+        return QColor(0,255,0);
+    }
+
+     if(lastSearchIndex != -1 && filterposindex == qfile->getMsgFilterPos(lastSearchIndex))
     {
         return searchBackgroundColor();
     }
@@ -492,4 +569,182 @@ bool TableModel::eventFilter(QObject *obj, QEvent *event) {
         }
     }
     return QObject::eventFilter(obj,event);
+}
+
+std::optional<int> TableModel::messageFilteredRowForViewRow(int viewRow) const
+{
+    if(!qfile)
+    {
+        return std::nullopt;
+    }
+    if(viewRow < 0 || viewRow >= rowCount())
+    {
+        return std::nullopt;
+    }
+    if(isCommentRow(viewRow))
+        return std::nullopt;
+    if(viewRow >= 0 && viewRow < m_viewRowToFilteredRow.size())
+        return m_viewRowToFilteredRow[viewRow];
+    if(viewRow < qfile->sizeFilter())
+        return viewRow;
+    return std::nullopt;
+}
+
+std::optional<int> TableModel::messageAllIndexForViewRow(int viewRow) const
+{
+    if(!qfile)
+    {
+        return std::nullopt;
+    }
+    if(viewRow < 0 || viewRow >= rowCount())
+    {
+        return std::nullopt;
+    }
+    if(isCommentRow(viewRow))
+        return std::nullopt;
+    const auto frOpt = messageFilteredRowForViewRow(viewRow);
+    if(!frOpt.has_value())
+        return std::nullopt;
+    return qfile->getMsgFilterPos(*frOpt);
+}
+
+int TableModel::viewRowForFilteredRow(int filteredRow) const
+{
+    if(!qfile)
+    {
+        return -1;
+    }
+    if(filteredRow < 0 || filteredRow >= qfile->sizeFilter())
+    {
+        return -1;
+    }
+    if(filteredRow >= 0 && filteredRow < m_filteredRowToViewRow.size() && m_filteredRowToViewRow[filteredRow] >= 0)
+        return m_filteredRowToViewRow[filteredRow];
+    return filteredRow;
+}
+
+bool TableModel::isCommentRow(int viewRow) const
+{
+    if(viewRow < 0 || viewRow >= m_viewRowToCommentIndex.size())
+        return false;
+    return m_viewRowToCommentIndex[viewRow] >= 0;
+}
+
+void TableModel::setOverlayComments(QVector<OverlayComment> comments)
+{
+    m_overlayComments = std::move(comments);
+    rebuildOverlayMapping();
+}
+
+void TableModel::clearOverlayComments()
+{
+    m_overlayComments.clear();
+    rebuildOverlayMapping();
+}
+
+int TableModel::filteredRowForAllIndex(int allIndex) const
+{
+    if(!qfile)
+        return -1;
+    if(allIndex < 0)
+        return -1;
+
+    int lo = 0;
+    int hi = qfile->sizeFilter() - 1;
+    while(lo <= hi)
+    {
+        const int mid = lo + (hi - lo) / 2;
+        const int pos = qfile->getMsgFilterPos(mid);
+        if(pos == allIndex)
+            return mid;
+        if(pos < allIndex)
+            lo = mid + 1;
+        else
+            hi = mid - 1;
+    }
+    return -1;
+}
+
+void TableModel::rebuildOverlayMapping()
+{
+    m_viewRowToFilteredRow.clear();
+    m_viewRowToCommentIndex.clear();
+    m_filteredRowToViewRow.clear();
+
+    if(!qfile)
+        return;
+
+    const int filteredCount = qfile->sizeFilter();
+    m_filteredRowToViewRow.resize(filteredCount);
+    std::fill(m_filteredRowToViewRow.begin(), m_filteredRowToViewRow.end(), -1);
+
+    QVector<QVector<int>> before(filteredCount);
+    QVector<QVector<int>> after(filteredCount);
+
+    for(int ci = 0; ci < m_overlayComments.size(); ++ci)
+    {
+        const auto& c = m_overlayComments[ci];
+        int fileNum = -1;
+        for(int i = 0; i < qfile->getNumberOfFiles(); ++i)
+        {
+            if(qfile->getFileName(i) == c.fileName)
+            {
+                fileNum = i;
+                break;
+            }
+        }
+        if(fileNum < 0)
+            continue;
+
+        int allIndex = -1;
+        if(!qfile->getMsgIndexFromOffset(fileNum, c.anchorOffset, allIndex))
+            continue;
+
+        const int fr = filteredRowForAllIndex(allIndex);
+        if(fr < 0 || fr >= filteredCount)
+            continue;
+
+        if(c.after)
+            after[fr].append(ci);
+        else
+            before[fr].append(ci);
+    }
+
+    auto stableSortByCreated = [this](QVector<int>& vec) {
+        std::stable_sort(vec.begin(), vec.end(), [this](int a, int b) {
+            return m_overlayComments[a].createdUtcMs < m_overlayComments[b].createdUtcMs;
+        });
+    };
+
+    for(int fr = 0; fr < filteredCount; ++fr)
+    {
+        stableSortByCreated(before[fr]);
+        stableSortByCreated(after[fr]);
+    }
+
+    int viewRow = 0;
+    m_viewRowToFilteredRow.reserve(filteredCount + m_overlayComments.size());
+    m_viewRowToCommentIndex.reserve(filteredCount + m_overlayComments.size());
+
+    for(int fr = 0; fr < filteredCount; ++fr)
+    {
+        for(const int ci : before[fr])
+        {
+            m_viewRowToFilteredRow.append(-1);
+            m_viewRowToCommentIndex.append(ci);
+            ++viewRow;
+        }
+
+        m_filteredRowToViewRow[fr] = viewRow;
+        m_viewRowToFilteredRow.append(fr);
+        m_viewRowToCommentIndex.append(-1);
+        ++viewRow;
+
+        for(const int ci : after[fr])
+        {
+            m_viewRowToFilteredRow.append(-1);
+            m_viewRowToCommentIndex.append(ci);
+            ++viewRow;
+        }
+    }
 }

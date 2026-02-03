@@ -132,6 +132,10 @@ private:
     WorkingDirectory workingDirectory;
     bool filterIsChanged;
 
+    bool insertUserCommentIntoDltFileAtSelection(bool after, const QString& text);
+    void ensureUserCommentFilterExists();
+    int filteredRowForAllIndex(int allIndex) const;
+
     /* Status line items */
     QLabel *statusFilename;
     QLabel *statusFileError;
@@ -438,6 +442,8 @@ public slots:
     void on_actionFindNext();
     void mark_unmark_lines();
     void unmark_all_lines();
+    void addCommentBeforeSelectedRow();
+    void addCommentAfterSelectedRow();
     void filterIndexStart();
     void filterIndexEnd();
     void splitLogsEcuid();

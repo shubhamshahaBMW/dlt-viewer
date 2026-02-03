@@ -62,6 +62,10 @@ public:
                         QDltExporter::DltExportFormat exportFormat,
                         QDltExporter::DltExportSelection exportSelection, QModelIndexList *selection, int _automaticTimeSettings,qlonglong _utcOffset,int _dst,char delimiter=QDLT_DEFAULT_EXPORT_DELIMITER,QString signature=QDLT_DEFAULT_EXPORT_SIGNATURE,QObject *parent = 0);
 
+    // When exporting SelectionSelected, callers may provide filtered-row indices directly.
+    // This is useful when the view model has extra synthetic rows.
+    void setSelectedRows(const QList<int>& rows);
+
     void run() override;
 
     /* Export some messages from QDltFile to a CSV file.

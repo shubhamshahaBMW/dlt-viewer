@@ -24,6 +24,11 @@
 #include <QFileDialog>
 #include <QProgressDialog>
 #include <QTemporaryFile>
+#include <QSaveFile>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QRegularExpression>
 #include <QPluginLoader>
 #include <QPushButton>
 #include <QKeyEvent>
@@ -36,6 +41,7 @@
 #include <QDateTime>
 #include <QLabel>
 #include <QInputDialog>
+#include <QSet>
 #include <QByteArray>
 #include <QSysInfo>
 #include <QSerialPort>
@@ -579,6 +585,76 @@ void MainWindow::initSignalConnections()
     // connect file loaded signal with  explorerView
     connect(this, &MainWindow::dltFileLoaded, this, [this](){
         ui->tabExplore->setCurrentFile(recentFiles[0]);
+    });
+
+    // Auto-load sidecar comments when a DLT is opened
+    connect(this, &MainWindow::dltFileLoaded, this, [this](){
+        TableModel *model = qobject_cast<TableModel *>(ui->tableView->model());
+        if(!model)
+            return;
+
+        QVector<TableModel::OverlayComment> all;
+        for(int i = 0; i < qfile.getNumberOfFiles(); ++i)
+        {
+            const QString fn = qfile.getFileName(i);
+            if(fn.isEmpty())
+                continue;
+
+            // Cleanup stale temp files from previous crashes/failed writes.
+            {
+                const QFileInfo dltInfo(fn);
+                QDir dir(dltInfo.absolutePath());
+                const QString base = dltInfo.completeBaseName();
+                const QStringList oldInsertTemps = dir.entryList(QStringList() << (base + QStringLiteral(".comment.*.tmp")), QDir::Files);
+                for(const auto& t : oldInsertTemps)
+                    QFile::remove(dir.absoluteFilePath(t));
+
+                const QString sidecarName = QFileInfo(fn + QStringLiteral(".comments.json")).fileName();
+                const QStringList sidecarCandidates = dir.entryList(QStringList() << (sidecarName + QStringLiteral(".*")), QDir::Files);
+                const QRegularExpression rx(QStringLiteral("^%1\\.[A-Za-z0-9]{6,}$").arg(QRegularExpression::escape(sidecarName)));
+                for(const auto& t : sidecarCandidates)
+                {
+                    if(rx.match(t).hasMatch())
+                        QFile::remove(dir.absoluteFilePath(t));
+                }
+            }
+
+            QFile sidecar(fn + QStringLiteral(".comments.json"));
+            if(!sidecar.exists())
+                continue;
+            if(!sidecar.open(QIODevice::ReadOnly))
+                continue;
+
+            const QJsonDocument doc = QJsonDocument::fromJson(sidecar.readAll());
+            sidecar.close();
+            if(!doc.isObject())
+                continue;
+
+            const QJsonObject root = doc.object();
+            const QJsonArray comments = root.value(QStringLiteral("comments")).toArray();
+            for(const auto& v : comments)
+            {
+                if(!v.isObject())
+                    continue;
+                const QJsonObject o = v.toObject();
+                TableModel::OverlayComment c;
+                c.fileName = fn;
+                c.anchorOffset = static_cast<qint64>(o.value(QStringLiteral("anchorOffset")).toVariant().toLongLong());
+                c.after = o.value(QStringLiteral("after")).toBool(false);
+                c.text = o.value(QStringLiteral("text")).toString();
+                c.ecu = o.value(QStringLiteral("ecu")).toString();
+                c.timeSeconds = static_cast<unsigned int>(o.value(QStringLiteral("timeSeconds")).toInt());
+                c.microseconds = static_cast<unsigned int>(o.value(QStringLiteral("microseconds")).toInt());
+                c.timestamp = static_cast<unsigned int>(o.value(QStringLiteral("timestamp")).toInt());
+                c.sessionId = static_cast<unsigned int>(o.value(QStringLiteral("sessionId")).toInt());
+                c.createdUtcMs = static_cast<qint64>(o.value(QStringLiteral("createdUtcMs")).toVariant().toLongLong());
+                if(!c.text.isEmpty() && c.anchorOffset >= 0)
+                    all.append(c);
+            }
+        }
+
+        model->setOverlayComments(std::move(all));
+        model->modelChanged();
     });
 
     connect(ui->tableView, &DltTableView::changeFontSize, this, [this](int direction){
@@ -1525,8 +1601,13 @@ void MainWindow::mark_unmark_lines()
     for ( unsigned long int i = 0; i < amount; i++ )
     {
 
-     line = ui->tableView->selectionModel()->selectedRows().at(i).row();
-     line = qfile.getMsgFilterPos(line);
+     const int viewRow = ui->tableView->selectionModel()->selectedRows().at(i).row();
+     const auto allIndexOpt = model ? model->messageAllIndexForViewRow(viewRow) : std::optional<int>();
+     if(!allIndexOpt.has_value())
+     {
+         continue;
+     }
+     line = static_cast<unsigned long int>(*allIndexOpt);
      if ( true == selectedMarkerRows.contains(line) )// so we remove it
       {
        //qDebug() << "Remove selected line" << line;
@@ -1549,17 +1630,422 @@ void MainWindow::unmark_all_lines()
     model->setManualMarker(selectedMarkerRows, QColor(settings->markercolorRed,settings->markercolorGreen,settings->markercolorBlue)); //used in mainwindow
 }
 
+void MainWindow::addCommentBeforeSelectedRow()
+{
+    const QModelIndex current = ui->tableView->currentIndex();
+    if(!current.isValid())
+        return;
+
+    bool ok = false;
+    const QString text = QInputDialog::getMultiLineText(this, tr("Add Comment"), tr("Comment:"), QString(), &ok);
+    if(!ok)
+        return;
+    const QString trimmed = text.trimmed();
+    if(trimmed.isEmpty())
+        return;
+
+    insertUserCommentIntoDltFileAtSelection(/*after*/false, trimmed);
+}
+
+void MainWindow::addCommentAfterSelectedRow()
+{
+    const QModelIndex current = ui->tableView->currentIndex();
+    if(!current.isValid())
+        return;
+
+    bool ok = false;
+    const QString text = QInputDialog::getMultiLineText(this, tr("Add Comment"), tr("Comment:"), QString(), &ok);
+    if(!ok)
+        return;
+    const QString trimmed = text.trimmed();
+    if(trimmed.isEmpty())
+        return;
+
+    insertUserCommentIntoDltFileAtSelection(/*after*/true, trimmed);
+}
+
+namespace {
+
+QByteArray makeVerboseUserCommentMessage(const QDltMsg& anchorMsg, const QString& text)
+{
+    QDltMsg comment;
+
+    comment.setMode(QDltMsg::DltModeVerbose);
+    comment.setType(QDltMsg::DltTypeLog);
+    comment.setSubtype(QDltMsg::DltLogInfo);
+    comment.setApid(QStringLiteral("USER"));
+    comment.setCtid(QStringLiteral("CMNT"));
+
+    const QString ecu = anchorMsg.getEcuid().isEmpty() ? QStringLiteral("DLTV") : anchorMsg.getEcuid();
+    comment.setEcuid(ecu);
+    comment.setTime(static_cast<unsigned int>(anchorMsg.getTime()));
+    comment.setMicroseconds(anchorMsg.getMicroseconds());
+    comment.setTimestamp(anchorMsg.getTimestamp());
+    comment.setSessionid(anchorMsg.getSessionid());
+    comment.setMessageCounter(0);
+    comment.setEndianness(anchorMsg.getEndianness() == QDlt::DltEndiannessUnknown
+                              ? QDlt::DltEndiannessLittleEndian
+                              : anchorMsg.getEndianness());
+
+    QDltArgument arg;
+    arg.setTypeInfo(QDltArgument::DltTypeInfoUtf8);
+    arg.setData(text.toUtf8());
+    comment.setNumberOfArguments(1);
+    comment.addArgument(arg);
+
+    QByteArray out;
+    if(!comment.getMsg(out, /*withStorageHeader*/true))
+    {
+        return QByteArray();
+    }
+    return out;
+}
+
+bool insertBytesIntoFileInPlace(const QString& filename, qint64 insertOffset, const QByteArray& insertBytes, QString& error)
+{
+    error.clear();
+    if(insertOffset < 0)
+    {
+        error = QStringLiteral("Invalid insert offset");
+        return false;
+    }
+
+    QFileInfo info(filename);
+    QTemporaryFile tmp(info.absolutePath() + QDir::separator() + info.completeBaseName() + ".comment.XXXXXX.tmp");
+    tmp.setAutoRemove(false);
+    if(!tmp.open())
+    {
+        error = QStringLiteral("Failed to create temp file: %1").arg(tmp.errorString());
+        return false;
+    }
+
+    QFile in(filename);
+    if(!in.open(QIODevice::ReadOnly))
+    {
+        error = QStringLiteral("Failed to open file for read: %1").arg(in.errorString());
+        tmp.close();
+        QFile::remove(tmp.fileName());
+        return false;
+    }
+
+    const qint64 fileSize = in.size();
+    const qint64 boundedOffset = qBound<qint64>(0, insertOffset, fileSize);
+
+    static const qint64 kChunk = 4 * 1024 * 1024;
+    qint64 remaining = boundedOffset;
+    QByteArray buffer;
+    buffer.resize(static_cast<int>(kChunk));
+    while(remaining > 0)
+    {
+        const qint64 toRead = qMin(remaining, kChunk);
+        const qint64 n = in.read(buffer.data(), toRead);
+        if(n <= 0)
+        {
+            error = QStringLiteral("Read failed while copying prefix");
+            in.close();
+            tmp.close();
+            QFile::remove(tmp.fileName());
+            return false;
+        }
+        if(tmp.write(buffer.constData(), n) != n)
+        {
+            error = QStringLiteral("Write failed while copying prefix");
+            in.close();
+            tmp.close();
+            QFile::remove(tmp.fileName());
+            return false;
+        }
+        remaining -= n;
+    }
+
+    if(!insertBytes.isEmpty())
+    {
+        if(tmp.write(insertBytes) != insertBytes.size())
+        {
+            error = QStringLiteral("Write failed while writing inserted bytes");
+            in.close();
+            tmp.close();
+            QFile::remove(tmp.fileName());
+            return false;
+        }
+    }
+
+    // copy rest
+    while(true)
+    {
+        const qint64 n = in.read(buffer.data(), kChunk);
+        if(n < 0)
+        {
+            error = QStringLiteral("Read failed while copying suffix");
+            in.close();
+            tmp.close();
+            QFile::remove(tmp.fileName());
+            return false;
+        }
+        if(n == 0)
+            break;
+        if(tmp.write(buffer.constData(), n) != n)
+        {
+            error = QStringLiteral("Write failed while copying suffix");
+            in.close();
+            tmp.close();
+            QFile::remove(tmp.fileName());
+            return false;
+        }
+    }
+
+    in.close();
+    tmp.flush();
+    tmp.close();
+
+    const QString backup = filename + ".bak";
+    if(QFile::exists(backup))
+        QFile::remove(backup);
+
+    if(!QFile::rename(filename, backup))
+    {
+        error = QStringLiteral("Failed to rename original to backup");
+        QFile::remove(tmp.fileName());
+        return false;
+    }
+
+    if(!QFile::rename(tmp.fileName(), filename))
+    {
+        // try to restore
+        QFile::rename(backup, filename);
+        error = QStringLiteral("Failed to replace original file");
+        QFile::remove(tmp.fileName());
+        return false;
+    }
+
+    QFile::remove(backup);
+    return true;
+}
+
+} // namespace
+
+bool MainWindow::insertUserCommentIntoDltFileAtSelection(bool after, const QString& text)
+{
+    if(text.trimmed().isEmpty())
+        return false;
+
+    const QModelIndex current = ui->tableView->currentIndex();
+    if(!current.isValid())
+        return false;
+
+    TableModel *model = qobject_cast<TableModel *>(ui->tableView->model());
+    const auto filteredRowOpt = model ? model->messageFilteredRowForViewRow(current.row()) : std::optional<int>();
+    if(!filteredRowOpt.has_value())
+        return false;
+
+    const int filteredRow = *filteredRowOpt;
+    const int anchorAllIndex = qfile.getMsgFilterPos(filteredRow);
+
+    qint64 anchorOffset = -1;
+    int fileNum = -1;
+    int indexInFile = -1;
+    if(!qfile.getMsgOffset(anchorAllIndex, anchorOffset, fileNum, indexInFile))
+        return false;
+    const QString filename = qfile.getFileName(fileNum);
+    if(filename.isEmpty())
+        return false;
+
+    QDltMsg anchorMsg;
+    if(!qfile.getMsg(anchorAllIndex, anchorMsg))
+        return false;
+
+    // Load existing sidecar (per-file)
+    const QString sidecarPath = filename + QStringLiteral(".comments.json");
+    QJsonArray arr;
+    {
+        QFile in(sidecarPath);
+        if(in.exists() && in.open(QIODevice::ReadOnly))
+        {
+            const QJsonDocument doc = QJsonDocument::fromJson(in.readAll());
+            if(doc.isObject())
+                arr = doc.object().value(QStringLiteral("comments")).toArray();
+        }
+    }
+
+    QJsonObject entry;
+    entry.insert(QStringLiteral("anchorOffset"), QString::number(anchorOffset));
+    entry.insert(QStringLiteral("after"), after);
+    entry.insert(QStringLiteral("text"), text);
+    entry.insert(QStringLiteral("ecu"), anchorMsg.getEcuid());
+    entry.insert(QStringLiteral("timeSeconds"), static_cast<int>(anchorMsg.getTime()));
+    entry.insert(QStringLiteral("microseconds"), static_cast<int>(anchorMsg.getMicroseconds()));
+    entry.insert(QStringLiteral("timestamp"), static_cast<int>(anchorMsg.getTimestamp()));
+    entry.insert(QStringLiteral("sessionId"), static_cast<int>(anchorMsg.getSessionid()));
+    entry.insert(QStringLiteral("createdUtcMs"), QString::number(QDateTime::currentDateTimeUtc().toMSecsSinceEpoch()));
+    arr.append(entry);
+
+    QJsonObject root;
+    root.insert(QStringLiteral("version"), 1);
+    root.insert(QStringLiteral("comments"), arr);
+
+    QSaveFile out(sidecarPath);
+    if(!out.open(QIODevice::WriteOnly))
+    {
+        QMessageBox::critical(this, QStringLiteral("DLT Viewer"),
+                              QStringLiteral("Failed to write comments sidecar file:\n%1").arg(out.errorString()));
+        return false;
+    }
+    out.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+    if(!out.commit())
+    {
+        QMessageBox::critical(this, QStringLiteral("DLT Viewer"),
+                              QStringLiteral("Failed to save comments sidecar file:\n%1").arg(out.errorString()));
+        return false;
+    }
+
+    // Best-effort cleanup of any stale temp artifacts for this sidecar.
+    {
+        const QFileInfo info(sidecarPath);
+        QDir dir(info.absolutePath());
+        const QString sidecarName = info.fileName();
+        const QStringList candidates = dir.entryList(QStringList() << (sidecarName + QStringLiteral(".*")), QDir::Files);
+        const QRegularExpression rx(QStringLiteral("^%1\\.[A-Za-z0-9]{6,}$").arg(QRegularExpression::escape(sidecarName)));
+        for(const auto& t : candidates)
+        {
+            if(rx.match(t).hasMatch())
+                QFile::remove(dir.absoluteFilePath(t));
+        }
+    }
+
+    ensureUserCommentFilterExists();
+
+    // Reload sidecars into model (simple: trigger dltFileLoaded handlers by re-emitting)
+    // Instead of reloading the DLT, just load sidecars and update the model.
+    if(model)
+    {
+        QVector<TableModel::OverlayComment> all;
+        for(int i = 0; i < qfile.getNumberOfFiles(); ++i)
+        {
+            const QString fn = qfile.getFileName(i);
+            QFile sidecar(fn + QStringLiteral(".comments.json"));
+            if(!sidecar.exists() || !sidecar.open(QIODevice::ReadOnly))
+                continue;
+            const QJsonDocument doc = QJsonDocument::fromJson(sidecar.readAll());
+            sidecar.close();
+            if(!doc.isObject())
+                continue;
+            const QJsonArray comments = doc.object().value(QStringLiteral("comments")).toArray();
+            for(const auto& v : comments)
+            {
+                if(!v.isObject())
+                    continue;
+                const QJsonObject o = v.toObject();
+                TableModel::OverlayComment c;
+                c.fileName = fn;
+                c.anchorOffset = o.value(QStringLiteral("anchorOffset")).toString().toLongLong();
+                c.after = o.value(QStringLiteral("after")).toBool(false);
+                c.text = o.value(QStringLiteral("text")).toString();
+                c.ecu = o.value(QStringLiteral("ecu")).toString();
+                c.timeSeconds = static_cast<unsigned int>(o.value(QStringLiteral("timeSeconds")).toInt());
+                c.microseconds = static_cast<unsigned int>(o.value(QStringLiteral("microseconds")).toInt());
+                c.timestamp = static_cast<unsigned int>(o.value(QStringLiteral("timestamp")).toInt());
+                c.sessionId = static_cast<unsigned int>(o.value(QStringLiteral("sessionId")).toInt());
+                c.createdUtcMs = o.value(QStringLiteral("createdUtcMs")).toString().toLongLong();
+                if(!c.text.isEmpty() && c.anchorOffset >= 0)
+                    all.append(c);
+            }
+        }
+        model->setOverlayComments(std::move(all));
+        model->modelChanged();
+    }
+
+    return true;
+}
+
+int MainWindow::filteredRowForAllIndex(int allIndex) const
+{
+    if(allIndex < 0)
+        return -1;
+
+    int lo = 0;
+    int hi = qfile.sizeFilter() - 1;
+    while(lo <= hi)
+    {
+        const int mid = lo + (hi - lo) / 2;
+        const int pos = qfile.getMsgFilterPos(mid);
+        if(pos == allIndex)
+            return mid;
+        if(pos < allIndex)
+            lo = mid + 1;
+        else
+            hi = mid - 1;
+    }
+    return -1;
+}
+
+void MainWindow::ensureUserCommentFilterExists()
+{
+    if(!project.filter)
+        return;
+
+    bool hasEnabledPositive = false;
+
+    for(int i = 0; i < project.filter->topLevelItemCount(); ++i)
+    {
+        auto* item = dynamic_cast<FilterItem*>(project.filter->topLevelItem(i));
+        if(!item)
+            continue;
+        if(item->filter.type != QDltFilter::positive)
+            continue;
+        if(item->filter.enableFilter)
+            hasEnabledPositive = true;
+        if(!item->filter.enableApid || !item->filter.enableCtid)
+            continue;
+        if(item->filter.apid == QStringLiteral("USER") && item->filter.ctid == QStringLiteral("CMNT"))
+            return;
+    }
+
+    auto* item = new FilterItem(0);
+    item->filter.type = QDltFilter::positive;
+    item->filter.name = QStringLiteral("USER/CMNT comments");
+    // Do not accidentally filter the whole view down to only comments.
+    // Only auto-enable if the user already has active positive filters.
+    item->filter.enableFilter = hasEnabledPositive;
+    item->filter.enableApid = true;
+    item->filter.enableCtid = true;
+    item->filter.apid = QStringLiteral("USER");
+    item->filter.ctid = QStringLiteral("CMNT");
+    item->update();
+
+    project.filter->addTopLevelItem(item);
+    filterIsChanged = true;
+    filterUpdate();
+    applyConfigEnabled(true);
+}
+
 
 void MainWindow::exportSelection(bool ascii = true,bool file = false,QDltExporter::DltExportFormat format = QDltExporter::FormatClipboard)
 {
     Q_UNUSED(ascii);
     Q_UNUSED(file);
 
-    QModelIndexList list = ui->tableView->selectionModel()->selection().indexes();
+    // Convert view rows to filtered message rows (ignore inserted comment rows).
+    QList<int> selectedFilteredRows;
+    QSet<int> unique;
+    const QModelIndexList selectedRows = ui->tableView->selectionModel()->selectedRows();
+    TableModel *model = qobject_cast<TableModel *>(ui->tableView->model());
+    for(const QModelIndex& idx : selectedRows)
+    {
+        if(!model)
+            continue;
+        const auto filteredRowOpt = model->messageFilteredRowForViewRow(idx.row());
+        if(!filteredRowOpt.has_value())
+            continue;
+        if(unique.contains(*filteredRowOpt))
+            continue;
+        unique.insert(*filteredRowOpt);
+        selectedFilteredRows.append(*filteredRowOpt);
+    }
 
     filterUpdate(); // update filters of qfile before starting Exporting for RegEx operation
 
-    QDltExporter exporter(&qfile,"",&pluginManager,format,QDltExporter::SelectionSelected,&list,project.settings->automaticTimeSettings,project.settings->utcOffset,project.settings->dst,QDltOptManager::getInstance()->getDelimiter(),QDltOptManager::getInstance()->getSignature());
+    QDltExporter exporter(&qfile,"",&pluginManager,format,QDltExporter::SelectionSelected,nullptr,project.settings->automaticTimeSettings,project.settings->utcOffset,project.settings->dst,QDltOptManager::getInstance()->getDelimiter(),QDltOptManager::getInstance()->getSignature());
+    exporter.setSelectedRows(selectedFilteredRows);
     connect(&exporter,SIGNAL(clipboard(QString)),this,SLOT(clipboard(QString)));
     exporter.exportMessages();
     disconnect(&exporter,SIGNAL(clipboard(QString)),this,SLOT(clipboard(QString)));
@@ -2510,6 +2996,8 @@ bool MainWindow::openDlpFile(QString fileName)
         filterUpdate();
         /* and update UI elements for filters */
         on_filterWidget_itemSelectionChanged();
+
+        tableModel->modelChanged();
 
         /* Finally, enable the 'Apply' button, if needed */
         if((QDltSettingsManager::getInstance()->value("startup/pluginsEnabled", true).toBool()) || anyFiltersEnabled())
@@ -4415,9 +4903,17 @@ void MainWindow::onTableViewSelectionChanged(const QItemSelection & selected, co
         //scroll manually because autoscroll is off
         ui->tableView->scrollTo(index);
 
-        msgIndex = qfile.getMsgFilterPos(index.row());
-        msg.setMsg(qfile.getMsgFilter(index.row()),true,settings->supportDLTv2Decoding);
-        msg.setIndex(qfile.getMsgFilterPos(index.row()));
+        TableModel *model = qobject_cast<TableModel *>(ui->tableView->model());
+        const auto filteredRowOpt = model ? model->messageFilteredRowForViewRow(index.row()) : std::optional<int>();
+        if(!filteredRowOpt.has_value())
+        {
+            return;
+        }
+        const int filteredRow = *filteredRowOpt;
+
+        msgIndex = qfile.getMsgFilterPos(filteredRow);
+        msg.setMsg(qfile.getMsgFilter(filteredRow),true,settings->supportDLTv2Decoding);
+        msg.setIndex(msgIndex);
         activeViewerPlugins = pluginManager.getViewerPlugins();
         activeDecoderPlugins = pluginManager.getDecoderPlugins();
 
@@ -6330,7 +6826,11 @@ void MainWindow::filterIndexStart()
         }
     }
 
-    quint64 pos = qfile.getMsgFilterPos(index.row());
+    TableModel *model = qobject_cast<TableModel *>(ui->tableView->model());
+    const auto allIndexOpt = model ? model->messageAllIndexForViewRow(index.row()) : std::optional<int>();
+    if(!allIndexOpt.has_value())
+        return;
+    quint64 pos = static_cast<quint64>(*allIndexOpt);
     ui->lineEditFilterStart->setText(QString("%1").arg(pos));
 }
 
@@ -6355,7 +6855,11 @@ void MainWindow::filterIndexEnd()
         }
     }
 
-    quint64 pos = qfile.getMsgFilterPos(index.row());
+    TableModel *model = qobject_cast<TableModel *>(ui->tableView->model());
+    const auto allIndexOpt = model ? model->messageAllIndexForViewRow(index.row()) : std::optional<int>();
+    if(!allIndexOpt.has_value())
+        return;
+    quint64 pos = static_cast<quint64>(*allIndexOpt);
     ui->lineEditFilterEnd->setText(QString("%1").arg(pos));
 }
 
@@ -6425,9 +6929,15 @@ void MainWindow::filterAddTable() {
         }
     }
 
-    data = qfile.getMsgFilter(index.row());
+    TableModel *model = qobject_cast<TableModel *>(ui->tableView->model());
+    const auto filteredRowOpt = model ? model->messageFilteredRowForViewRow(index.row()) : std::optional<int>();
+    if(!filteredRowOpt.has_value())
+        return;
+    const int filteredRow = *filteredRowOpt;
+
+    data = qfile.getMsgFilter(filteredRow);
     msg.setMsg(data,true,settings->supportDLTv2Decoding);
-    msg.setIndex(qfile.getMsgFilterPos(index.row()));
+    msg.setIndex(qfile.getMsgFilterPos(filteredRow));
 
     /* decode message if necessary */
     iterateDecodersForMsg(msg,!QDltOptManager::getInstance()->issilentMode());
@@ -6938,6 +7448,16 @@ void MainWindow::on_tableView_customContextMenuRequested(QPoint pos)
 
     menu.addSeparator();
 
+    action = new QAction("Add Comment Before...", &menu);
+    connect(action, SIGNAL(triggered()), this, SLOT(addCommentBeforeSelectedRow()));
+    menu.addAction(action);
+
+    action = new QAction("Add Comment After...", &menu);
+    connect(action, SIGNAL(triggered()), this, SLOT(addCommentAfterSelectedRow()));
+    menu.addAction(action);
+
+    menu.addSeparator();
+
     action = new QAction("Filter Index Start", &menu);
     connect(action, SIGNAL(triggered()), this, SLOT(filterIndexStart()));
     menu.addAction(action);
@@ -7406,6 +7926,11 @@ bool MainWindow::jump_to_line(int line)
     if (0 > row)
         return false;
 
+    // Convert filtered row -> view row (model contains inserted comment rows)
+    const int viewRow = tableModel->viewRowForFilteredRow(row);
+    if(viewRow < 0)
+        return false;
+
     ui->tableView->selectionModel()->clear();
 
     // maybe a more elegant way exists... anyway this works
@@ -7430,7 +7955,7 @@ bool MainWindow::jump_to_line(int line)
     else if(project.settings->showPayload == 1)
         column = FieldNames::Payload;
 
-    QModelIndex idx = tableModel->index(row, column, QModelIndex());
+    QModelIndex idx = tableModel->index(viewRow, column, QModelIndex());
     ui->tableView->scrollTo(idx, QAbstractItemView::PositionAtTop);
     ui->tableView->selectionModel()->select(idx, QItemSelectionModel::Select|QItemSelectionModel::Rows);
     ui->tableView->setFocus();
@@ -7617,10 +8142,17 @@ void MainWindow::saveSelection()
     /* Store old selections */
     QModelIndexList rows = ui->tableView->selectionModel()->selectedRows();
 
+    TableModel *model = qobject_cast<TableModel *>(ui->tableView->model());
+    if(!model)
+        return;
+
     for(int i=0;i<rows.count();i++)
     {
         int sr = rows.at(i).row();
-        previousSelection.append(qfile.getMsgFilterPos(sr));
+        const auto allIndexOpt = model->messageAllIndexForViewRow(sr);
+        if(!allIndexOpt.has_value())
+            continue;
+        previousSelection.append(*allIndexOpt);
         //qDebug() << "Save Selection " << i << " at line " << qfile.getMsgFilterPos(sr);
     }
 }
@@ -7653,6 +8185,10 @@ void MainWindow::restoreSelection()
     {
         int nearestIndex = nearest_line(previousSelection.at(j));
 
+        const int viewRow = tableModel->viewRowForFilteredRow(nearestIndex);
+        if(viewRow < 0)
+            continue;
+
         //qDebug() << "Restore Selection" << j << "at index" << nearestIndex << "at line" << previousSelection.at(0);
 
         if(j==0)
@@ -7660,7 +8196,7 @@ void MainWindow::restoreSelection()
             firstIndex = nearestIndex;
         }
 
-        QModelIndex idx = tableModel->index(nearestIndex, col);
+        QModelIndex idx = tableModel->index(viewRow, col);
 
         newSelection.select(idx, idx);
     }
@@ -7670,7 +8206,8 @@ void MainWindow::restoreSelection()
 
     // scroll to first selected row
     ui->tableView->setFocus();  // focus must be set before scrollto is possible
-    QModelIndex idx = tableModel->index(firstIndex, col, QModelIndex());
+    const int firstViewRow = tableModel->viewRowForFilteredRow(firstIndex);
+    QModelIndex idx = tableModel->index(firstViewRow, col, QModelIndex());
     ui->tableView->scrollTo(idx, QAbstractItemView::PositionAtTop);
 }
 

@@ -37,6 +37,7 @@
 #include <QPluginLoader>
 
 #include <cstdint>
+#include <QVector>
 
 #define RECONNECT_TIMEOUT 3
 

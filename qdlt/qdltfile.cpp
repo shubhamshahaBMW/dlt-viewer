@@ -156,6 +156,110 @@ bool QDltFile::open(QString _filename, bool append)
     return true;
 }
 
+bool QDltFile::getMsgOffset(int globalIndex, qint64& offset, int& fileNum, int& indexInFile) const
+{
+    offset = -1;
+    fileNum = -1;
+    indexInFile = -1;
+
+    if(globalIndex < 0)
+        return false;
+
+    int remaining = globalIndex;
+    for(int numFile = 0; numFile < files.size(); ++numFile)
+    {
+        const auto* item = files[numFile];
+        if(!item)
+            continue;
+
+        const int count = item->indexAll.size();
+        if(remaining < count)
+        {
+            fileNum = numFile;
+            indexInFile = remaining;
+            if(indexInFile < 0 || indexInFile >= item->indexAll.size())
+                return false;
+            offset = item->indexAll[indexInFile];
+            return (offset >= 0);
+        }
+        remaining -= count;
+    }
+
+    return false;
+}
+
+bool QDltFile::getMsgInsertOffset(int globalIndex, bool after, qint64& offset) const
+{
+    offset = -1;
+    qint64 msgOffset = -1;
+    int fileNum = -1;
+    int indexInFile = -1;
+
+    if(!getMsgOffset(globalIndex, msgOffset, fileNum, indexInFile))
+        return false;
+
+    if(fileNum < 0 || fileNum >= files.size() || files[fileNum] == nullptr)
+        return false;
+
+    const auto* item = files[fileNum];
+    if(!after)
+    {
+        offset = msgOffset;
+        return true;
+    }
+
+    const int nextIndex = indexInFile + 1;
+    if(nextIndex >= 0 && nextIndex < item->indexAll.size())
+    {
+        offset = item->indexAll[nextIndex];
+        return true;
+    }
+
+    // insert after the last message -> end of file
+    offset = item->infile.size();
+    return (offset >= 0);
+}
+
+bool QDltFile::getMsgIndexFromOffset(int fileNum, qint64 offset, int& globalIndex) const
+{
+    globalIndex = -1;
+    if(fileNum < 0 || fileNum >= files.size() || files[fileNum] == nullptr)
+        return false;
+    if(offset < 0)
+        return false;
+
+    const auto* item = files[fileNum];
+    const auto& idx = item->indexAll;
+    if(idx.isEmpty())
+        return false;
+
+    // binary search for exact match
+    int lo = 0;
+    int hi = idx.size() - 1;
+    while(lo <= hi)
+    {
+        const int mid = lo + (hi - lo) / 2;
+        const qint64 v = idx[mid];
+        if(v == offset)
+        {
+            int base = 0;
+            for(int i = 0; i < fileNum; ++i)
+            {
+                if(files[i])
+                    base += files[i]->indexAll.size();
+            }
+            globalIndex = base + mid;
+            return true;
+        }
+        if(v < offset)
+            lo = mid + 1;
+        else
+            hi = mid - 1;
+    }
+
+    return false;
+}
+
 void QDltFile::clearIndex()
 {
     for(int num=0;num<files.size();num++)

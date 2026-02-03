@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <limits>
 #include <QDebug>
 #include <QFile>
 #include <QFileInfo>
@@ -29,6 +30,12 @@ QDltExporter::QDltExporter(QDltFile *from, QString outputfileName, QDltPluginMan
     this->selection = selection;
 
     this->signature = signature;
+}
+
+void QDltExporter::setSelectedRows(const QList<int>& rows)
+{
+    selectedRows = rows;
+    selection = NULL;
 }
 
 void QDltExporter::run()
@@ -193,16 +200,34 @@ void QDltExporter::writeCSVLine(int index, QDltMsg msg,QFile &to)
 bool QDltExporter::startExport()
 {
     /* Sort the selection list and create Row list */
-    if(exportSelection == QDltExporter::SelectionSelected && selection != NULL)
+    if(exportSelection == QDltExporter::SelectionSelected)
     {
-        std::sort(selection->begin(), selection->end());
-        selectedRows.clear();
-        for(int num=0;num<selection->count();num++)
+        if(selection != NULL)
         {
-            QModelIndex index = selection->at(num);
-            if(index.column() == 0)
-                selectedRows.append(index.row());
+            std::sort(selection->begin(), selection->end());
+            selectedRows.clear();
+            for(int num=0;num<selection->count();num++)
+            {
+                QModelIndex index = selection->at(num);
+                if(index.column() == 0)
+                    selectedRows.append(index.row());
+            }
         }
+
+        // Ensure sorted + unique indices
+        std::sort(selectedRows.begin(), selectedRows.end());
+        QList<int> uniqueRows;
+        uniqueRows.reserve(selectedRows.size());
+        int last = std::numeric_limits<int>::min();
+        for(const int r : selectedRows)
+        {
+            if(uniqueRows.isEmpty() || r != last)
+            {
+                uniqueRows.append(r);
+                last = r;
+            }
+        }
+        selectedRows.swap(uniqueRows);
     }
 
     /* open the export file */

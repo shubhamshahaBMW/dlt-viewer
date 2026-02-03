@@ -168,6 +168,23 @@ public:
     */
     int getMsgFilterPos(int index) const;
 
+    //! Get file offset (byte position) of a message in the opened file(s).
+    //!
+    //! The offset points to the start of the message (storage header).
+    //! Returns false if the index is out of range.
+    bool getMsgOffset(int globalIndex, qint64& offset, int& fileNum, int& indexInFile) const;
+
+    //! Get file offset where a new message should be inserted before/after the given message.
+    //!
+    //! If after==true and the message is the last one in the file, the returned offset is EOF.
+    //! Returns false if the index is out of range.
+    bool getMsgInsertOffset(int globalIndex, bool after, qint64& offset) const;
+
+    //! Map a byte offset in a specific opened file back to a global message index.
+    //!
+    //! Returns true if an exact message start offset was found.
+    bool getMsgIndexFromOffset(int fileNum, qint64 offset, int& globalIndex) const;
+
     //! Delete all filters and markers.
     /*!
       This includes all positive and negative filters and markers.
