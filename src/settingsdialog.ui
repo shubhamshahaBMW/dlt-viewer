@@ -94,6 +94,16 @@
          </property>
         </widget>
        </item>
+      <item row="6" column="1" colspan="4">
+       <widget class="QCheckBox" name="checkBoxAutoSaveFilters">
+        <property name="toolTip">
+         <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Automatically save filter changes to &lt;b&gt;AutoSave.dlf&lt;/b&gt; and load it on startup if present.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+        </property>
+        <property name="text">
+         <string>Auto-save filters (AutoSave.dlf)</string>
+        </property>
+       </widget>
+      </item>
        <item row="2" column="1" colspan="3">
         <widget class="QLineEdit" name="lineEditDefaultProjectFile"/>
        </item>
@@ -1258,6 +1268,7 @@
   <tabstop>lineEditDefaultFilterPath</tabstop>
   <tabstop>toolButtonDefaultFilterPath</tabstop>
   <tabstop>checkBoxFilterCache</tabstop>
+  <tabstop>checkBoxAutoSaveFilters</tabstop>
   <tabstop>checkBoxStartUpMinimized</tabstop>
   <tabstop>spinBoxFrequency</tabstop>
   <tabstop>checkBoxIndex</tabstop>

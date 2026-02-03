@@ -44,6 +44,8 @@
 #include <QSet>
 #include <QByteArray>
 #include <QSysInfo>
+#include <QSignalBlocker>
+#include <QScopedValueRollback>
 #include <QSerialPort>
 #include <QSerialPortInfo>
 #include <QNetworkProxyFactory>
@@ -103,6 +105,8 @@ MainWindow::MainWindow(QWidget *parent) :
 
     searchDlg->loadSearchHistoryList(searchHistory);
     filterIsChanged = false;
+    isLoadingFilters = false;
+    ignoreDefaultFilterSelectionChange = false;
 
     initState();
 
@@ -798,6 +802,9 @@ void MainWindow::initFileHandling()
     {
         qDebug() << "### Load filter";
 
+        QScopedValueRollback<bool> loadGuard(isLoadingFilters, true);
+        QSignalBlocker filterWidgetBlocker(ui->filterWidget);
+
         // enable filters if they are not enabled
         if(QDltSettingsManager::getInstance()->value("startup/filtersEnabled", true).toBool()==false)
         {
@@ -813,6 +820,7 @@ void MainWindow::initFileHandling()
                 // qDebug() << QString("Loading default filter %1").arg(settings->defaultFilterPath);
                 filterUpdate();
                 setCurrentFilters(filter);
+                filterIsChanged = false;
             }
             else
             {
@@ -824,6 +832,42 @@ void MainWindow::initFileHandling()
                 {
                     QMessageBox::critical(0, QString("DLT Viewer"),QString("Loading DLT Filter file failed!"));
                 }
+            }
+        }
+    }
+
+    /* auto-load autosaved filters on startup (if present)
+     * - do not override explicit CLI filters
+     * - do not override filters already loaded from a project
+     */
+    if(settings->autoSaveFilters && QDltOptManager::getInstance()->getFilterFiles().isEmpty() && project.filter->topLevelItemCount() == 0)
+    {
+        const QString autoSaveFile = getAutoSaveDlfPath();
+        if(QFileInfo::exists(autoSaveFile))
+        {
+            qDebug() << "### Load AutoSave filter:" << autoSaveFile;
+
+            QScopedValueRollback<bool> loadGuard(isLoadingFilters, true);
+            QSignalBlocker filterWidgetBlocker(ui->filterWidget);
+
+            // enable filters if they are not enabled
+            if(QDltSettingsManager::getInstance()->value("startup/filtersEnabled", true).toBool() == false)
+            {
+                qDebug("Enable filters, as they were disabled and AutoSave.dlf is present!");
+                QDltSettingsManager::getInstance()->setValue("startup/filtersEnabled", true);
+            }
+
+            if(project.LoadFilter(autoSaveFile, true))
+            {
+                filterUpdate();
+                setCurrentFilters(autoSaveFile);
+                applyConfigEnabled(true);
+                filterIsChanged = false;
+                selectDefaultFilterInComboBox(autoSaveFile);
+            }
+            else
+            {
+                qWarning() << "Loading AutoSave.dlf failed:" << autoSaveFile;
             }
         }
     }
@@ -2951,21 +2995,74 @@ bool MainWindow::anyFiltersEnabled()
     return foundEnabledFilter;
 }
 
+void MainWindow::maybeSaveChangedFilterConfiguration()
+{
+    if(!filterIsChanged)
+    {
+        return;
+    }
+
+    if(QMessageBox::information(this, "DLT Viewer",
+       "You have changed the filter. Do you want to save the filter configuration?",
+       QMessageBox::Yes, QMessageBox::No) == QMessageBox::Yes)
+    {
+        on_action_menuFilter_Save_As_triggered();
+    }
+}
+
+void MainWindow::selectDefaultFilterInComboBox(const QString &filterPath)
+{
+    if(filterPath.isEmpty() || !ui || !ui->comboBoxFilterSelection)
+    {
+        return;
+    }
+
+    QSignalBlocker blocker(ui->comboBoxFilterSelection);
+    ignoreDefaultFilterSelectionChange = true;
+
+    int index = ui->comboBoxFilterSelection->findText(filterPath);
+    if(index < 0)
+    {
+        ui->comboBoxFilterSelection->addItem(filterPath);
+        index = ui->comboBoxFilterSelection->findText(filterPath);
+    }
+
+    if(index >= 0)
+    {
+        ui->comboBoxFilterSelection->setCurrentIndex(index);
+    }
+
+    ignoreDefaultFilterSelectionChange = false;
+}
+
 bool MainWindow::openDlfFile(QString fileName,bool replace)
 {
-    if(!fileName.isEmpty() && project.LoadFilter(fileName,replace))
+    if(fileName.isEmpty())
+    {
+        return false;
+    }
+
+    if(replace)
+    {
+        maybeSaveChangedFilterConfiguration();
+    }
+
+    QScopedValueRollback<bool> loadGuard(isLoadingFilters, true);
+    QSignalBlocker filterWidgetBlocker(ui->filterWidget);
+
+    if(project.LoadFilter(fileName,replace))
     {
         workingDirectory.setDlfDirectory(QFileInfo(fileName).absolutePath());
         setCurrentFilters(fileName);
         applyConfigEnabled(true);
         on_filterWidget_itemSelectionChanged();
         ui->tabWidget->setCurrentWidget(ui->tabPFilter);
+        filterIsChanged = false;
+        return true;
     }
-    else
-    {
-        QMessageBox::critical(0, QString("DLT Viewer"),QString("Loading DLT Filter file failed!"));
-    }
-    return true;
+
+    QMessageBox::critical(0, QString("DLT Viewer"),QString("Loading DLT Filter file failed!"));
+    return false;
 }
 
 bool MainWindow::openDlpFile(QString fileName)
@@ -3774,8 +3871,8 @@ void MainWindow::on_tabExplore_fileOpenRequested(const QString &path)
         statusProgressBar->show();
         importerThread->start();
     } else if (path.endsWith(".dlf", Qt::CaseInsensitive)) {
-        openDlfFile(path, true);
-        reloadLogFile();
+        if(openDlfFile(path, true))
+            reloadLogFile();
     }
 }
 
@@ -6863,6 +6960,66 @@ void MainWindow::filterIndexEnd()
     ui->lineEditFilterEnd->setText(QString("%1").arg(pos));
 }
 
+QString MainWindow::getAutoSaveDlfPath() const
+{
+    QDir dir;
+    if(settings && settings->defaultFilterPath && !settings->defaultFilterPathName.isEmpty())
+    {
+        dir.setPath(settings->defaultFilterPathName);
+    }
+    else
+    {
+        dir.setPath(workingDirectory.getDlfDirectory());
+    }
+
+    dir.setPath(QDir(dir.absolutePath()).absolutePath());
+    return dir.filePath(QStringLiteral("AutoSave.dlf"));
+}
+
+void MainWindow::autosaveFilters()
+{
+    if(!settings || !settings->autoSaveFilters)
+    {
+        return;
+    }
+
+    if(isLoadingFilters || !filterIsChanged)
+    {
+        return;
+    }
+
+    const QString targetFile = getAutoSaveDlfPath();
+    const QFileInfo targetInfo(targetFile);
+    QDir targetDir(targetInfo.absolutePath());
+
+    if(!targetDir.exists())
+    {
+        if(!targetDir.mkpath(QStringLiteral(".")))
+        {
+            qWarning().noquote() << "AutoSave: cannot create filter directory" << targetDir.absolutePath();
+            return;
+        }
+    }
+
+    const QString tmpFile = targetDir.filePath(QStringLiteral("AutoSave.dlf.tmp"));
+
+    if(!project.SaveFilter(tmpFile))
+    {
+        qWarning().noquote() << "AutoSave: saving filters failed" << tmpFile;
+        return;
+    }
+
+    QFile::remove(targetFile);
+    if(!QFile::rename(tmpFile, targetFile))
+    {
+        qWarning().noquote() << "AutoSave: replacing" << targetFile << "failed";
+        QFile::remove(tmpFile);
+        return;
+    }
+
+    selectDefaultFilterInComboBox(targetFile);
+}
+
 //Groups DLT logs by ECU ID and displays progress to the user.
 void MainWindow::splitLogsEcuid()
 {
@@ -7166,6 +7323,9 @@ void MainWindow::filterDialogRead(FilterDialog &dlg,FilterItem* item)
     {
         tableModel->modelChanged();
     }
+
+    filterIsChanged = true;
+    autosaveFilters();
 }
 
 void MainWindow::on_action_menuFilter_Duplicate_triggered() {
@@ -7241,6 +7401,8 @@ void MainWindow::on_action_menuFilter_Delete_triggered()
     FilterTreeWidget* filterWidget = static_cast<FilterTreeWidget*>(project.filter);
     filterWidget->deleteSelected();
     filterIsChanged = true;
+
+    autosaveFilters();
 }
 
 void MainWindow::onactionmenuFilter_SetAllActiveTriggered()
@@ -7276,6 +7438,9 @@ void MainWindow::onactionmenuFilter_SetAllActiveTriggered()
     applyConfigEnabled(true);
 
     on_filterWidget_itemSelectionChanged();
+
+    filterIsChanged = true;
+    autosaveFilters();
 }
 
 void MainWindow::onactionmenuFilter_SetAllInactiveTriggered()
@@ -7311,6 +7476,9 @@ void MainWindow::onactionmenuFilter_SetAllInactiveTriggered()
     applyConfigEnabled(true);
 
     on_filterWidget_itemSelectionChanged();
+
+    filterIsChanged = true;
+    autosaveFilters();
 }
 
 void MainWindow::on_action_menuFilter_Clear_all_triggered()
@@ -7318,7 +7486,9 @@ void MainWindow::on_action_menuFilter_Clear_all_triggered()
     /* delete complete filter list */
     project.filter->clear();
     applyConfigEnabled(true);
-    filterIsChanged = false;
+    filterIsChanged = true;
+
+    autosaveFilters();
 }
 
 void MainWindow::filterUpdate()
@@ -7766,6 +7936,9 @@ void MainWindow::on_filterWidget_itemClicked(QTreeWidgetItem *item, int column)
             tmp->filter.enableFilter = true;
         }
         applyConfigEnabled(true);
+
+        filterIsChanged = true;
+        autosaveFilters();
     }
 }
 
@@ -7848,6 +8021,8 @@ void MainWindow::on_action_menuFilter_Append_Filters_triggered()
 
     openDlfFile(fileName,false);
     filterIsChanged = true;
+
+    autosaveFilters();
 }
 
 int MainWindow::nearest_line(int line)
@@ -8225,12 +8400,25 @@ void MainWindow::on_tabWidget_currentChanged(int index)
 
 void MainWindow::filterOrderChanged()
 {
+    if(isLoadingFilters)
+    {
+        return;
+    }
+
     filterUpdate();
     tableModel->modelChanged();
+
+    filterIsChanged = true;
+    autosaveFilters();
 }
 
 void MainWindow::filterCountChanged()
 {
+    if(isLoadingFilters)
+    {
+        return;
+    }
+
     // update filters on the DLT file itself
     filterUpdate();
     // update the currently shown table
@@ -8239,6 +8427,9 @@ void MainWindow::filterCountChanged()
     applyConfigEnabled(true);
     // update the menu entries based on current selection
     on_filterWidget_itemSelectionChanged();
+
+    filterIsChanged = true;
+    autosaveFilters();
 }
 
 void MainWindow::searchTableRenewed()
@@ -8269,12 +8460,14 @@ void MainWindow::searchtable_cellSelected( QModelIndex index)
 
 void MainWindow::on_comboBoxFilterSelection_currentTextChanged(const QString &arg1)
 {
-    /* load current selected filter */
-    if(!arg1.isEmpty() && project.LoadFilter(arg1,!ui->checkBoxAppendDefaultFilter->isChecked()))
+    if(ignoreDefaultFilterSelectionChange)
     {
-        workingDirectory.setDlfDirectory(QFileInfo(arg1).absolutePath());
-        setCurrentFilters(arg1);
+        return;
+    }
 
+    /* load current selected filter */
+    if(!arg1.isEmpty() && openDlfFile(arg1, !ui->checkBoxAppendDefaultFilter->isChecked()))
+    {
        /* Activate filter and create index there as usual */
        on_applyConfig_clicked();
 

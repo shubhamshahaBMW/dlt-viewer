@@ -33,18 +33,18 @@ public:
      * \return Current working directory for the operation
      * \sa WorkingDirectoryType
      */
-    QString getDirectory(WorkingDirectoryType type, QString extra = QString());
+    QString getDirectory(WorkingDirectoryType type, QString extra = QString()) const;
 
     //! Get working directory for DLT files
-    QString getDltDirectory();
+    QString getDltDirectory() const;
     //! Get working directory for Project files
-    QString getDlpDirectory();
+    QString getDlpDirectory() const;
     //! Get working directory for Filter files
-    QString getDlfDirectory();
+    QString getDlfDirectory() const;
     //! Get working directory for export files
-    QString getExportDirectory();
+    QString getExportDirectory() const;
     //! Get working directory for plugin configuration
-    QString getPluginDirectory(QString pluginName);
+    QString getPluginDirectory(QString pluginName) const;
 
     /*!
      * \brief setDirectory
@@ -68,7 +68,7 @@ public:
 
     // Helpers
 private:
-    QString createKeyFor(WorkingDirectoryType type, QString extra);
+    QString createKeyFor(WorkingDirectoryType type, QString extra) const;
 };
 
 #endif // WORKINGDIRERCTORY_H

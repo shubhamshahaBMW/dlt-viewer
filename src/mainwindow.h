@@ -132,6 +132,9 @@ private:
     WorkingDirectory workingDirectory;
     bool filterIsChanged;
 
+    bool isLoadingFilters;
+    bool ignoreDefaultFilterSelectionChange;
+
     bool insertUserCommentIntoDltFileAtSelection(bool after, const QString& text);
     void ensureUserCommentFilterExists();
     int filteredRowForAllIndex(int allIndex) const;
@@ -372,6 +375,12 @@ private:
 
     void writeDLTMessageToFile(const QByteArray& bufferHeader, std::string_view payload,
                                const EcuItem* ecuitem);
+
+    QString getAutoSaveDlfPath() const;
+    void autosaveFilters();
+
+    void selectDefaultFilterInComboBox(const QString &filterPath);
+    void maybeSaveChangedFilterConfiguration();
 
 
 protected:

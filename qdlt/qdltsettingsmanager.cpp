@@ -186,6 +186,7 @@ void QDltSettingsManager::writeSettings()
     settings->setValue("startup/pluginsAutoloadPath",pluginsAutoloadPath);
     settings->setValue("startup/pluginsAutoloadPathName",pluginsAutoloadPathName);
     settings->setValue("startup/filterCache",filterCache);
+    settings->setValue("startup/autoSaveFilters", autoSaveFilters);
     settings->setValue("startup/autoConnect",autoConnect);
     settings->setValue("startup/supportDLTv2Decoding",supportDLTv2Decoding);
     settings->setValue("startup/autoScroll",autoScroll);
@@ -454,6 +455,7 @@ void QDltSettingsManager::readSettings()
     pluginsAutoloadPath = settings->value("startup/pluginsAutoloadPath",0).toInt();
     pluginsAutoloadPathName = settings->value("startup/pluginsAutoloadPathName",QString("")).toString();
     filterCache = settings->value("startup/filterCache",1).toInt();
+    autoSaveFilters = settings->value("startup/autoSaveFilters", 1).toInt();
     autoConnect = settings->value("startup/autoConnect",0).toInt();
     supportDLTv2Decoding = settings->value("startup/supportDLTv2Decoding",0).toInt();
     autoScroll = settings->value("startup/autoScroll",1).toInt();

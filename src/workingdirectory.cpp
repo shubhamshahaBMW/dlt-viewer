@@ -7,7 +7,7 @@
 
 WorkingDirectory::WorkingDirectory() { }
 
-QString WorkingDirectory::createKeyFor(WorkingDirectoryType type, QString extra)
+QString WorkingDirectory::createKeyFor(WorkingDirectoryType type, QString extra) const
 {
     QString key = "WorkingDirectory/";
     switch(type)
@@ -33,7 +33,7 @@ QString WorkingDirectory::createKeyFor(WorkingDirectoryType type, QString extra)
 }
 
 // The meat of getters
-QString WorkingDirectory::getDirectory(WorkingDirectoryType type, QString extra)
+QString WorkingDirectory::getDirectory(WorkingDirectoryType type, QString extra) const
 {
     /**
      * By default, empty string is returned. This should be
@@ -68,15 +68,15 @@ void WorkingDirectory::setDirectory(WorkingDirectoryType type, QString dir, QStr
 }
 
 // Getters
-QString WorkingDirectory::getDltDirectory()
+QString WorkingDirectory::getDltDirectory() const
 { return getDirectory(LogFile); }
-QString WorkingDirectory::getDlpDirectory()
+QString WorkingDirectory::getDlpDirectory() const
 { return getDirectory(ProjectFile); }
-QString WorkingDirectory::getDlfDirectory()
+QString WorkingDirectory::getDlfDirectory() const
 { return getDirectory(FilterFile); }
-QString WorkingDirectory::getExportDirectory()
+QString WorkingDirectory::getExportDirectory() const
 { return getDirectory(ExportDir); }
-QString WorkingDirectory::getPluginDirectory(QString pluginName)
+QString WorkingDirectory::getPluginDirectory(QString pluginName) const
 { return getDirectory(PluginConfig, pluginName); }
 
 // Setters
