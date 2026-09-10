@@ -86,37 +86,35 @@ CTableModel::CTableModel(const QString & /*data*/, QObject *parent)
         return QVariant();
     }
 
-     std::optional<QDltMsg> msg;
-     QDltMsg omsg;
-     const bool decodeEnabled = QDltSettingsManager::getInstance()->value("startup/pluginsEnabled", true).toBool();
-     const int triggeredByUser = !QDltOptManager::getInstance()->issilentMode();
+    std::shared_ptr<const QDltMsg> msg;
+    const bool decodeEnabled = QDltSettingsManager::getInstance()->value("startup/pluginsEnabled", true).toBool();
+    const int triggeredByUser = !QDltOptManager::getInstance()->issilentMode();
 
     // CDecodeCacheService owns the complete decode identity, including plugin-pipeline generation.
-     if (m_decodeCacheService && m_decodeCacheService->message(qfile,
-                                      pluginManager,
-                                      filterposindex,
-                                      decodeEnabled,
-                                      triggeredByUser,
-                                      omsg,
-                                      true)) {
-         msg = std::make_optional(omsg);
-     }
+    if (m_decodeCacheService) {
+        msg = m_decodeCacheService->messageShared(qfile,
+                                                  pluginManager,
+                                                  filterposindex,
+                                                  decodeEnabled,
+                                                  triggeredByUser,
+                                                  true);
+    }
 
-     if (role == Qt::DisplayRole)
-     {
-       if (!msg.has_value())
-       {
-         if(index.column() == FieldNames::Index)
-         {
-             return QString("%1").arg(filterposindex);
-         }
-         else if(index.column() == FieldNames::Payload)
-         {
-             qDebug() << "Corrupted message at index" << index.row();
-             return QString("!!CORRUPTED MESSAGE!!");
-         }
-         return QVariant();
-       }
+    if (role == Qt::DisplayRole)
+    {
+        if (!msg)
+        {
+            if(index.column() == FieldNames::Index)
+            {
+                return QString("%1").arg(filterposindex);
+            }
+            else if(index.column() == FieldNames::Payload)
+            {
+                qDebug() << "Corrupted message at index" << index.row();
+                return QString("!!CORRUPTED MESSAGE!!");
+            }
+            return QVariant();
+        }
 
          QString visu_data;
          switch(index.column())
@@ -273,7 +271,7 @@ CTableModel::CTableModel(const QString & /*data*/, QObject *parent)
 
     if ( role == Qt::ToolTipRole )
     {
-        if (!msg.has_value())
+        if (!msg)
         {
             return QString("!!CORRUPTED MESSAGE!!");
         }
@@ -507,7 +505,7 @@ QSize CHtmlDelegate::sizeHint(const QStyleOptionViewItem &option, const QModelIn
     return QSize(doc.idealWidth(), doc.size().height());
 }
 
-QColor CTableModel::getMsgBackgroundColor(const std::optional<QDltMsg>& msg, int index, long int filterposindex) const
+QColor CTableModel::getMsgBackgroundColor(const std::shared_ptr<const QDltMsg>& msg, int index, long int filterposindex) const
 {
     /* first check manual markers with highest priority */
     if ( selectedMarkerRows.contains(filterposindex) )
@@ -515,7 +513,7 @@ QColor CTableModel::getMsgBackgroundColor(const std::optional<QDltMsg>& msg, int
       return manualMarkerColor;
     }
 
-    if (!msg.has_value())
+    if (!msg)
     {
         return QColor(1, 2, 3);
     }

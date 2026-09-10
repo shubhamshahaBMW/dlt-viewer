@@ -25,6 +25,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <memory>
 #include <mutex>
 #include <unordered_map>
 #include <vector>
@@ -44,6 +45,25 @@ class QDLT_EXPORT CDecodeCacheService
 public:
     //! Create an empty decode cache service.
     CDecodeCacheService();
+
+    /**
+     * @brief Retrieve and decode a message, returning a zero-copy shared pointer.
+     * @param file Source file containing the message.
+     * @param pluginManager Plugin pipeline used when decoding is enabled.
+     * @param globalIndex Global message index in @p file.
+     * @param decodeEnabled Whether plugin decoding should be performed.
+     * @param triggeredByUser Decode context or triggering user identifier.
+     * @param useCache Whether an existing cached result may be used or stored.
+     * @param singlePassBypass Skip all cache operations for a one-pass workload.
+     * @return Shared pointer to const QDltMsg if successfully retrieved, nullptr otherwise.
+     */
+    std::shared_ptr<const QDltMsg> messageShared(const QDltFile *file,
+                                                 QDltPluginManager *pluginManager,
+                                                 int globalIndex,
+                                                 bool decodeEnabled,
+                                                 int triggeredByUser,
+                                                 bool useCache = true,
+                                                 bool singlePassBypass = false);
 
     /**
      * @brief Retrieve and decode a message, optionally using the cache.
@@ -118,7 +138,7 @@ private:
     static constexpr int kMaxEntries = 8192;
 
     std::mutex m_cacheLock;
-    std::unordered_map<CacheKey, QDltMsg, CacheKeyHash> m_cache;
+    std::unordered_map<CacheKey, std::shared_ptr<const QDltMsg>, CacheKeyHash> m_cache;
     std::deque<CacheKey> m_fifoOrder;
 
     //! Evict oldest entries until the cache is within limits.

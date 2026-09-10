@@ -40,28 +40,31 @@ CSearchTableModel::~CSearchTableModel()
 
 QVariant CSearchTableModel::data(const QModelIndex &index, int role) const
 {
-    QDltMsg msg;
-
     if (!index.isValid())
         return QVariant();
 
     if (index.row() < 0 || index.row() >= static_cast<int>(m_searchResultList.size()))
         return QVariant();
 
+    const int globalIndex = static_cast<int>(m_searchResultList.at(index.row()));
+    const bool decodeEnabled = QDltSettingsManager::getInstance()->value("startup/pluginsEnabled", true).toBool();
+    const int triggeredByUser = !QDltOptManager::getInstance()->issilentMode();
+
+    std::shared_ptr<const QDltMsg> msg;
+    if (m_decodeCacheService)
+    {
+        msg = m_decodeCacheService->messageShared(qfile,
+                                                  pluginManager,
+                                                  globalIndex,
+                                                  decodeEnabled,
+                                                  triggeredByUser,
+                                                  true);
+    }
+
     if (role == Qt::DisplayRole)
     {
-        const int globalIndex = static_cast<int>(m_searchResultList.at(index.row()));
-        const bool decodeEnabled = QDltSettingsManager::getInstance()->value("startup/pluginsEnabled", true).toBool();
-        const int triggeredByUser = !QDltOptManager::getInstance()->issilentMode();
-
         /* get the message with the selected item id */
-        if(!m_decodeCacheService->message(qfile,
-                                         pluginManager,
-                                         globalIndex,
-                                         decodeEnabled,
-                                         triggeredByUser,
-                                         msg,
-                                         true))
+        if(!msg)
         {
             if(index.column() == FieldNames::Index)
             {
@@ -168,26 +171,17 @@ QVariant CSearchTableModel::data(const QModelIndex &index, int role) const
             return QString("%1").arg(msg.getNumberOfArguments());
         case FieldNames::Payload:
             /* display payload */
-            visu_data = msg.toStringPayload().simplified().remove(QChar::Null);
-            if(qfile) qfile->applyRegExString(msg,visu_data);
-            /*if((QDltSettingsManager::getInstance()->value("startup/filtersEnabled", true).toBool()))
-            {
-                for(int num = 0; num < project->filter->topLevelItemCount (); num++) {
-                    FilterItem *item = (FilterItem*)project->filter->topLevelItem(num);
-                    if(item->checkState(0) == Qt::Checked && item->filter.enableRegexSearchReplace) {
-                        visu_data.replace(QRegularExpression(item->filter.regex_search), item->filter.regex_replace);
-                    }
-                }
-            }*/
+            visu_data = msg->toStringPayload().simplified().remove(QChar::Null);
+            if(qfile) qfile->applyRegExString(*msg,visu_data);
             return visu_data;
         case FieldNames::MessageId:
-            return QString::asprintf(project->settings->msgIdFormat.toUtf8(),msg.getMessageId());
+            return QString::asprintf(project->settings->msgIdFormat.toUtf8(),msg->getMessageId());
         default:
             if (index.column()>=FieldNames::Arg0)
             {
                 int col=index.column()-FieldNames::Arg0; //arguments a zero based
                 QDltArgument arg;
-                if (msg.getArgument(col,arg))
+                if (msg->getArgument(col,arg))
                 {
                     return arg.toString();
                 }
@@ -201,20 +195,10 @@ QVariant CSearchTableModel::data(const QModelIndex &index, int role) const
 
     if ( role == Qt::ForegroundRole )
     {
-        const int globalIndex = static_cast<int>(m_searchResultList.at(index.row()));
-        const bool decodeEnabled = QDltSettingsManager::getInstance()->value("startup/pluginsEnabled", true).toBool();
-        const int triggeredByUser = !QDltOptManager::getInstance()->issilentMode();
-
-        if(m_decodeCacheService->message(qfile,
-                                        pluginManager,
-                                        globalIndex,
-                                        decodeEnabled,
-                                        triggeredByUser,
-                                        msg,
-                                        true))
+        if(msg)
         {
             /* Valid message found, calculate background color and find optimal forground color */
-            return QVariant(QBrush(DltUiUtils::optimalTextColor(getMsgBackgroundColor(msg))));
+            return QVariant(QBrush(DltUiUtils::optimalTextColor(getMsgBackgroundColor(*msg))));
         }
         /* default return black forground color */
         QColor brushColor = QColor(0,0,0);
@@ -229,20 +213,10 @@ QVariant CSearchTableModel::data(const QModelIndex &index, int role) const
 
     if ( role == Qt::BackgroundRole )
     {
-        const int globalIndex = static_cast<int>(m_searchResultList.at(index.row()));
-        const bool decodeEnabled = QDltSettingsManager::getInstance()->value("startup/pluginsEnabled", true).toBool();
-        const int triggeredByUser = !QDltOptManager::getInstance()->issilentMode();
-
-        if(m_decodeCacheService->message(qfile,
-                                        pluginManager,
-                                        globalIndex,
-                                        decodeEnabled,
-                                        triggeredByUser,
-                                        msg,
-                                        true))
+        if(msg)
         {
             /* Valid message found, calculate background color */
-            return QVariant(QBrush(getMsgBackgroundColor(msg)));
+            return QVariant(QBrush(getMsgBackgroundColor(*msg)));
         }
         /* default return white background color */
         QColor brushColor = QColor(255,255,255);
@@ -392,7 +366,7 @@ int CSearchTableModel::get_SearchResultListSize() const
     return static_cast<int>(m_searchResultList.size());
 }
 
-QColor CSearchTableModel::getMsgBackgroundColor(QDltMsg &msg) const
+QColor CSearchTableModel::getMsgBackgroundColor(const QDltMsg &msg) const
 {
     /* get check marker color */
     QColor color = qfile->checkMarker(msg);

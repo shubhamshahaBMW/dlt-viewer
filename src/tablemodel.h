@@ -34,6 +34,7 @@
 #include "fieldnames.h"
 #include "decodecacheservice.h"
 
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -103,7 +104,7 @@ private:
     //! Notify Qt views about row/column delta updates.
     void notifyModelDelta(int currentRowCount, int currentColumnCount);
     //! Compute message background color for a row.
-    QColor getMsgBackgroundColor(const std::optional<QDltMsg>& msg, int index, long int filterposindex) const;
+    QColor getMsgBackgroundColor(const std::shared_ptr<const QDltMsg>& msg, int index, long int filterposindex) const;
     //! Handle tooltip and related item-view events.
     bool eventFilter(QObject *obj, QEvent *event);
 };

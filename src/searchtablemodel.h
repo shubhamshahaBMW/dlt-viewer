@@ -78,7 +78,7 @@ public:
     bool get_SearchResultEntry(int position, unsigned long &entry);
 
     //! Determine background color for a decoded message.
-    QColor getMsgBackgroundColor(QDltMsg &msg) const;
+    QColor getMsgBackgroundColor(const QDltMsg &msg) const;
 
     /* pointer to the current loaded file */
     QDltFile *qfile;

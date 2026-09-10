@@ -53,19 +53,51 @@ bool DltMessageMatcher::passesPreFilters(const QDltMsg &msg) const
 
 bool DltMessageMatcher::matchHeaderAndPayload(const QDltMsg &msg, const QString &searchText) const
 {
+    if (searchText.isEmpty())
+        return m_headerSearchEnabled || m_payloadSearchEnabled;
+
     if (m_headerSearchEnabled) {
         auto header = msg.toStringHeader();
         if (m_messageIdFormatUtf8)
             header += ' ' + QString::asprintf(m_messageIdFormatUtf8->constData(), msg.getMessageId());
         else if (m_messageIdFormat)
             header += ' ' + QString::asprintf(m_messageIdFormat->toUtf8().constData(), msg.getMessageId());
-        if (searchText.isEmpty() || header.contains(searchText, m_caseSensitivity))
+        if (header.contains(searchText, m_caseSensitivity))
             return true;
     }
 
     if (m_payloadSearchEnabled) {
+        // Fast path for verbose messages: search arguments without large concatenated toStringPayload() allocation
+        if (msg.getMode() == QDltMsg::DltModeVerbose) {
+            const int argCount = msg.getNumberOfArguments();
+            QDltArgument arg;
+            for (int i = 0; i < argCount; ++i) {
+                if (msg.getArgument(i, arg)) {
+                    const auto typeInfo = arg.getTypeInfo();
+                    if (typeInfo == QDltArgument::DltTypeInfoStrg || typeInfo == QDltArgument::DltTypeInfoUtf8) {
+                        const QByteArray data = arg.getData();
+                        if (!data.isEmpty()) {
+                            const QString text = QString::fromUtf8(data.constData(), data.size());
+                            if (text.contains(searchText, m_caseSensitivity))
+                                return true;
+                        }
+                    } else {
+                        if (arg.toString().contains(searchText, m_caseSensitivity))
+                            return true;
+                    }
+                }
+            }
+
+            // If searchText has spaces, it might span multiple arguments ("arg1 arg2")
+            if (argCount > 1 && searchText.contains(' ')) {
+                const auto payload = msg.toStringPayload();
+                return payload.contains(searchText, m_caseSensitivity);
+            }
+            return false;
+        }
+
         const auto payload = msg.toStringPayload();
-        return searchText.isEmpty() || payload.contains(searchText, m_caseSensitivity);
+        return payload.contains(searchText, m_caseSensitivity);
     }
 
     return false;

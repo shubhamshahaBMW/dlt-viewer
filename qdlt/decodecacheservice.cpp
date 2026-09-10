@@ -29,30 +29,28 @@ CDecodeCacheService::CDecodeCacheService()
     m_cache.reserve(static_cast<std::size_t>(kMaxEntries));
 }
 
-bool CDecodeCacheService::message(const QDltFile *file,
-                                 QDltPluginManager *pluginManager,
-                                 int globalIndex,
-                                 bool decodeEnabled,
-                                 int triggeredByUser,
-                                 QDltMsg &msg,
-                                 bool useCache,
-                                 bool singlePassBypass)
+std::shared_ptr<const QDltMsg> CDecodeCacheService::messageShared(const QDltFile *file,
+                                                                 QDltPluginManager *pluginManager,
+                                                                 int globalIndex,
+                                                                 bool decodeEnabled,
+                                                                 int triggeredByUser,
+                                                                 bool useCache,
+                                                                 bool singlePassBypass)
 {
     if (!file || globalIndex < 0 || globalIndex >= file->size())
-        return false;
+        return nullptr;
 
     CQDltFileMessageStoreAdapter messageStore(file);
 
     // Single-pass scatter bypass skips cache I/O when each message is accessed only once.
     if (singlePassBypass)
     {
-        QDltMsg loaded;
-        if (!messageStore.message(static_cast<MessageId>(globalIndex), loaded))
-            return false;
-        if (decodeEnabled && !decode(pluginManager, triggeredByUser, loaded))
-            return false;
-        msg = loaded;
-        return true;
+        auto loaded = std::make_shared<QDltMsg>();
+        if (!messageStore.message(static_cast<MessageId>(globalIndex), *loaded))
+            return nullptr;
+        if (decodeEnabled && !decode(pluginManager, triggeredByUser, *loaded))
+            return nullptr;
+        return loaded;
     }
 
     const std::uint64_t decodePipelineGeneration =
@@ -73,18 +71,17 @@ bool CDecodeCacheService::message(const QDltFile *file,
                 pluginManager->decodePipelineGeneration() == decodePipelineGeneration;
             if (pipelineUnchanged)
             {
-                msg = it->second;
-                return true;
+                return it->second;
             }
         }
     }
 
-    QDltMsg loaded;
-    if (!messageStore.message(static_cast<MessageId>(globalIndex), loaded))
-        return false;
+    auto loaded = std::make_shared<QDltMsg>();
+    if (!messageStore.message(static_cast<MessageId>(globalIndex), *loaded))
+        return nullptr;
 
     if (decodeEnabled)
-        decode(pluginManager, triggeredByUser, loaded);
+        decode(pluginManager, triggeredByUser, *loaded);
 
     const bool pipelineUnchanged = !decodeEnabled || !pluginManager ||
         pluginManager->decodePipelineGeneration() == decodePipelineGeneration;
@@ -95,8 +92,7 @@ bool CDecodeCacheService::message(const QDltFile *file,
         const auto it = m_cache.find(key);
         if (it != m_cache.end())
         {
-            msg = it->second;
-            return true;
+            return it->second;
         }
 
         m_cache.emplace(key, loaded);
@@ -105,7 +101,29 @@ bool CDecodeCacheService::message(const QDltFile *file,
         pruneIfNeeded();
     }
 
-    msg = loaded;
+    return loaded;
+}
+
+bool CDecodeCacheService::message(const QDltFile *file,
+                                 QDltPluginManager *pluginManager,
+                                 int globalIndex,
+                                 bool decodeEnabled,
+                                 int triggeredByUser,
+                                 QDltMsg &msg,
+                                 bool useCache,
+                                 bool singlePassBypass)
+{
+    auto shared = messageShared(file,
+                                pluginManager,
+                                globalIndex,
+                                decodeEnabled,
+                                triggeredByUser,
+                                useCache,
+                                singlePassBypass);
+    if (!shared)
+        return false;
+
+    msg = *shared;
     return true;
 }
 
