@@ -22,6 +22,8 @@
 #include "export_rules.h"
 #include "qdltmsg.h"
 
+#include <QByteArray>
+
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -108,6 +110,10 @@ public:
 
     //! Return the raw serialized message payload bytes for a message id.
     std::vector<char> rawMessage(MessageId messageId) const override;
+    //! Return the raw serialized message payload bytes for a message id without
+    //! the std::vector<char> round trip rawMessage() requires for interface
+    //! compatibility; use when the caller only needs a QByteArray (e.g. export).
+    QByteArray rawMessageBytes(MessageId messageId) const;
     //! Decode a message by id into QDltMsg.
     bool message(MessageId messageId, QDltMsg &msg, bool useCache = true) const override;
 

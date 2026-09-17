@@ -405,6 +405,13 @@ private:
     int sizeLocked() const;
     QByteArray getMsgLocked(int index) const;
 
+    // Reads only a bounded prefix of the message at `index` (enough to cover the
+    // storage + DLT protocol headers) instead of the full message body, and
+    // reports the message's true total byte size via `storageSize`. Used by
+    // calculateTotalSizes() to avoid copying full (potentially large) message
+    // payloads just to compute size statistics.
+    bool messagePrefixAndSizeLocked(int index, int maxPrefixBytes, quint32 &storageSize, QByteArray &prefix) const;
+
     // Returns true when cache lookup/insert should be used for this access pattern.
     bool shouldUseMessageCache(int index) const;
 

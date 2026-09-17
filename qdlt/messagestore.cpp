@@ -79,6 +79,14 @@ std::vector<char> CQDltFileMessageStoreAdapter::rawMessage(MessageId messageId) 
     return std::vector<char>(data.cbegin(), data.cend());
 }
 
+QByteArray CQDltFileMessageStoreAdapter::rawMessageBytes(MessageId messageId) const
+{
+    if (!contains(messageId))
+        return QByteArray();
+
+    return m_file->messageBytesAt(static_cast<int>(messageId));
+}
+
 bool CQDltFileMessageStoreAdapter::message(MessageId messageId, QDltMsg &msg, bool useCache) const
 {
     if (!contains(messageId))
