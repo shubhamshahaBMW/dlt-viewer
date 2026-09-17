@@ -474,8 +474,7 @@ bool QDltExporter::getMsg(unsigned long int num,QDltMsg &msg,QByteArray &buf)
             qDebug() << "Failed to read message in" << __FILE__ << __LINE__;
             return false;
         }
-        const std::vector<char> raw = messageStore.rawMessage(messageId);
-        buf = QByteArray(raw.data(), static_cast<int>(raw.size()));
+        buf = messageStore.rawMessageBytes(messageId);
         msg.setIndex(static_cast<int>(num));
     }
     else if(exportSelection == QDltExporter::SelectionFiltered)
@@ -493,8 +492,7 @@ bool QDltExporter::getMsg(unsigned long int num,QDltMsg &msg,QByteArray &buf)
             qDebug() << "Failed to read message in" << __FILE__ << __LINE__;
             return false;
         }
-        const std::vector<char> raw = messageStore.rawMessage(messageId);
-        buf = QByteArray(raw.data(), static_cast<int>(raw.size()));
+        buf = messageStore.rawMessageBytes(messageId);
         msg.setIndex(messageStore.globalIndexForMessageId(messageId));
     }
     else if(exportSelection == QDltExporter::SelectionSelected)
@@ -513,8 +511,7 @@ bool QDltExporter::getMsg(unsigned long int num,QDltMsg &msg,QByteArray &buf)
             qDebug() << "Failed to read message in" << __FILE__ << __LINE__;
             return false;
         }
-        const std::vector<char> raw = messageStore.rawMessage(messageId);
-        buf = QByteArray(raw.data(), static_cast<int>(raw.size()));
+        buf = messageStore.rawMessageBytes(messageId);
         msg.setIndex(messageStore.globalIndexForMessageId(messageId));
     }
     else
