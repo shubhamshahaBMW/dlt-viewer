@@ -122,10 +122,6 @@ QByteArray QDltExporter::createDltMessage(const QDltMsg &msg, const QString &pay
     out.append(reinterpret_cast<const char*>(&storage), sizeof(DltStorageHeader));
     out.append(headerAndPayload);
 
-    // Self-check: can we parse what we just generated?
-    QDltMsg checkMsg;
-    checkMsg.setMsg(out, true, true);
-
     return out;
 }
 
@@ -571,9 +567,9 @@ bool QDltExporter::exportMsg(unsigned long int num, QDltMsg &msg, QByteArray &bu
             if(exportSelection == QDltExporter::SelectionAll)
                 text += QString("%1 ").arg(num);
             else if(exportSelection == QDltExporter::SelectionFiltered)
-                text += QString("%1 ").arg(globalIndexForSelectionRow(num));
+                text += QString("%1 ").arg(msg.getIndex());
             else if(exportSelection == QDltExporter::SelectionSelected)
-                text += QString("%1 ").arg(globalIndexForSelectionRow(num));
+                text += QString("%1 ").arg(msg.getIndex());
             else
                 return false;
             if( automaticTimeSettings == 0 )
@@ -617,9 +613,9 @@ bool QDltExporter::exportMsg(unsigned long int num, QDltMsg &msg, QByteArray &bu
         if(exportSelection == QDltExporter::SelectionAll)
             writeCSVLine(num, msg,to);
         else if(exportSelection == QDltExporter::SelectionFiltered)
-            writeCSVLine(globalIndexForSelectionRow(num), msg,to);
+            writeCSVLine(msg.getIndex(), msg,to);
         else if(exportSelection == QDltExporter::SelectionSelected)
-            writeCSVLine(globalIndexForSelectionRow(num), msg,to);
+            writeCSVLine(msg.getIndex(), msg,to);
         else
             return false;
     }
@@ -631,9 +627,9 @@ bool QDltExporter::exportMsg(unsigned long int num, QDltMsg &msg, QByteArray &bu
         if(exportSelection == QDltExporter::SelectionAll)
             text += QString("%1").arg(num);
         else if(exportSelection == QDltExporter::SelectionFiltered)
-            text += QString("%1").arg(globalIndexForSelectionRow(num));
+            text += QString("%1").arg(msg.getIndex());
         else if(exportSelection == QDltExporter::SelectionSelected)
-            text += QString("%1").arg(globalIndexForSelectionRow(num));
+            text += QString("%1").arg(msg.getIndex());
         else
             return false;
 
@@ -752,12 +748,15 @@ void QDltExporter::exportMessages()
                 const bool decodeEnabled = true;
                 const int index = msg.getIndex();
                 const bool hasGlobalIndex = (from != nullptr) && index >= 0;
+                // Export is a strict single forward pass; no message is ever revisited,
+                // so bypass the shared cache's locking/bookkeeping entirely (see finding 3.8).
                 if (hasGlobalIndex && decodeCacheService.message(from,
                                                                  pluginManager,
                                                                  index,
                                                                  decodeEnabled,
                                                                  silentMode,
                                                                  decoded,
+                                                                 true,
                                                                  true))
                 {
                     msg = decoded;
