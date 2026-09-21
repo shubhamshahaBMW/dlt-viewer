@@ -397,7 +397,12 @@ public:
 
 private:
     // Calculates total storage, message, and payload sizes for all indexed DLT messages.
+    // Fallback only: updateIndex() accumulates these sizes inline as it scans; this is
+    // used when getTotalStorageSize()/etc. are called before any scan has populated them.
     void calculateTotalSizes();
+    // Accumulates totalStorageSize/totalMessageSize/totalPayloadSize for one newly-indexed
+    // message, using values already known to updateIndex()'s scan (no extra I/O).
+    void accumulateMessageSizeLocked(quint32 totalMessageBytes, quint16 dltMessageLength, quint8 htyp);
     void recomputeEffectiveIndexFilterLocked();
     void bumpSearchSnapshotGenerationLocked();
     // Lock-free counterparts of size()/getMsg(int) for callers that already hold mutexQDlt

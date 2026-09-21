@@ -348,7 +348,6 @@ bool QDltFile::createIndex()
     ret = updateIndex();
 
     //qDebug() << "Create index finished - " << size() << "messages found";
-    calculateTotalSizes();
 
     return ret;
 }
@@ -430,6 +429,8 @@ bool QDltFile::updateIndex()
         qint64 next_message_pos = 0;
         int counter_header = 0;
         quint16 message_length = 0;
+        quint16 dltMessageLengthOnly = 0; // message_length before the storage-header offset is added
+        quint8 current_htyp = 0;
         qint64 file_size = files[numFile]->infile.size();
         qint64 errors_in_file  = 0;
 
@@ -464,6 +465,7 @@ bool QDltFile::updateIndex()
                     else if (counter_header==storageLength)
                     {
                         // Read DLT protocol version
+                        current_htyp = (unsigned char)cbuf[num];
                         version = (((unsigned char)cbuf[num])&0xe0)>>5;
                         if(version==1)
                         {
@@ -487,12 +489,15 @@ bool QDltFile::updateIndex()
                     {
                         // Read high byte of message length
                         counter_header = 0;
-                        message_length = (message_length<<8 | ((unsigned char)cbuf[num])) + storageLength;
+                        message_length = (message_length<<8 | ((unsigned char)cbuf[num]));
+                        dltMessageLengthOnly = message_length;
+                        message_length += storageLength;
                         next_message_pos = current_message_pos + message_length;
                         if(next_message_pos==file_size)
                         {
                             // last message found in file
                             files[numFile]->indexAll.append(current_message_pos);
+                            accumulateMessageSizeLocked(message_length, dltMessageLengthOnly, current_htyp);
                             break;
                         }
                         // speed up move directly to next message, if inside current buffer
@@ -544,6 +549,7 @@ bool QDltFile::updateIndex()
                     {
                         // Add message only when it is in the correct position in relationship to the last message
                         files[numFile]->indexAll.append(current_message_pos);
+                        accumulateMessageSizeLocked(message_length, dltMessageLengthOnly, current_htyp);
                         current_message_pos = pos+num-3;
                         counter_header = 3;
                         if(cbuf[num] == 0x01)
@@ -1385,6 +1391,19 @@ bool QDltFile::applyRegExString(const QDltMsg &msg,QString &text)
 bool QDltFile::applyRegExStringMsg(QDltMsg &msg) const
 {    
     return filterList.applyRegExStringMsg(msg);
+}
+
+void QDltFile::accumulateMessageSizeLocked(quint32 totalMessageBytes, quint16 dltMessageLength, quint8 htyp)
+{
+    totalStorageSize += alignedStorageSize(totalMessageBytes);
+
+    const int headerSize = calculateHeaderSize(htyp);
+    const int payloadSize = static_cast<int>(dltMessageLength) - headerSize;
+    if (dltMessageLength == 0 || payloadSize < 0)
+        return; // storage size still counted above; message/payload size unknown for a corrupt header
+
+    totalMessageSize += dltMessageLength;
+    totalPayloadSize += static_cast<quint32>(payloadSize);
 }
 
 void QDltFile::calculateTotalSizes()
